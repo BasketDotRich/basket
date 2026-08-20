@@ -18,6 +18,24 @@ type ActivityEvent = {
   listed: number;
 };
 
+/**
+ * Freshness derived from the newest event, never asserted as a constant.
+ * Claiming "LIVE · ~5MIN" above hours-old rows is exactly the kind of lie
+ * that makes people stop trusting every other number on the page.
+ */
+function Freshness({ newestTs }: { newestTs: number | null }) {
+  if (newestTs == null) return <span className="chip">WATCHING</span>;
+  const age = Date.now() - newestTs;
+  if (age < 15 * 60_000) {
+    return (
+      <span className="chip chip-on">
+        <span className="live-dot">●</span> LIVE
+      </span>
+    );
+  }
+  return <span className="chip">LAST TRADE {timeAgo(newestTs)}</span>;
+}
+
 export function ActivityFeed() {
   const [events, setEvents] = useState<ActivityEvent[] | null>(null);
 
@@ -40,26 +58,51 @@ export function ActivityFeed() {
     };
   }, []);
 
+  const newestTs = events && events.length > 0 ? events[0].ts : null;
+
+  const header = (
+    <div className="mb-1 flex items-center justify-between">
+      <h3 className="text-sm font-semibold text-ink2">On-chain activity</h3>
+      <Freshness newestTs={newestTs} />
+    </div>
+  );
+  const blurb = (
+    <p className="mb-2 text-[11px] text-ink3">
+      Position changes detected between wallet snapshots — no feeds, straight from chain.
+    </p>
+  );
+
   if (events == null) {
     return (
-      <div className="space-y-2">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="skeleton h-9 w-full" />
-        ))}
-      </div>
+      <>
+        {header}
+        {blurb}
+        <div className="space-y-2">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="skeleton h-9 w-full" />
+          ))}
+        </div>
+      </>
     );
   }
 
   if (events.length === 0) {
     return (
-      <p className="py-6 text-center text-[13px] text-ink3">
-        Watching the tracked wallets — position changes appear here as snapshots detect them
-        (~5 minute resolution).
-      </p>
+      <>
+        {header}
+        {blurb}
+        <p className="py-6 text-center text-[13px] text-ink3">
+          Watching the tracked wallets — a position change shows up here as soon as two
+          snapshots disagree.
+        </p>
+      </>
     );
   }
 
   return (
+    <>
+    {header}
+    {blurb}
     <ul className="divide-y divide-hairline">
       {events.slice(0, 14).map((e) => (
         <li key={e.id} className="flex items-center gap-2.5 py-2 text-[13px]">
@@ -81,5 +124,6 @@ export function ActivityFeed() {
         </li>
       ))}
     </ul>
+  </>
   );
 }

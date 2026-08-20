@@ -203,13 +203,6 @@ export default async function Home() {
               </table>
             </div>
             <div className="card p-4">
-              <div className="mb-1 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-ink2">On-chain activity</h3>
-                <span className="chip">LIVE · ~5MIN</span>
-              </div>
-              <p className="mb-2 text-[11px] text-ink3">
-                Position changes detected between wallet snapshots — no feeds, straight from chain.
-              </p>
               <ActivityFeed />
             </div>
           </div>

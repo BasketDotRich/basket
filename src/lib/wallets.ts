@@ -453,30 +453,65 @@ export function getTraderBasketCurveLive(basketId: number, days: number): Series
   });
 }
 
+// A sweep must finish INSIDE its own tick, otherwise the busy guard skips the
+// next one and effective freshness silently collapses. At ~1.1s per wallet a
+// full 150-wallet pass takes ~3min against a 5min tick, leaving no headroom —
+// so each sweep does a bounded slice instead.
+const SWEEP_DELAY_MS = 1100; // ~55 req/min — under lite-api's limit
+const SWEEP_BUDGET_MS = 2 * 60_000; // hard stop well inside SNAPSHOT_GAP
+const ROTATING_PER_SWEEP = 45;
+
 /**
- * Background refresher. With a 563-wallet roster we only keep the WARM SET
- * fresh (basket members + leaderboard-ranked wallets, ≤150); directory-only
- * wallets are snapshotted on demand when someone views or adds them.
- * An overlap guard stops sweeps from stacking.
+ * Background refresher, priority-ordered.
+ *
+ *   HOT  — wallets in baskets someone actually holds. Refreshed EVERY sweep,
+ *          so the wallets whose value backs a real position stay ~5min fresh.
+ *   WARM — the rest of the leaderboard, round-robined a slice at a time so the
+ *          whole roster still turns over without blowing the time budget.
+ *
+ * Directory-only wallets are snapshotted on demand when someone views or adds
+ * them. An overlap guard stops sweeps from stacking.
  */
 export function ensureWalletRefresher(): void {
   if (globalThis.__bRefresher) return;
   globalThis.__bRefresher = setInterval(async () => {
     if (globalThis.__bRefresherBusy) return;
     globalThis.__bRefresherBusy = true;
+    const startedAt = Date.now();
     try {
       const db = getDb();
-      const traders = db
+
+      // HOT: every wallet backing a live position, always.
+      const hot = db
         .prepare(
           `SELECT DISTINCT t.id, t.wallet FROM traders t
-           LEFT JOIN basket_traders bt ON bt.trader_id = t.id
-           WHERE bt.trader_id IS NOT NULL OR (t.seed_stats IS NOT NULL AND t.seed_stats LIKE '%monthly%')
-           LIMIT 150`
+           JOIN basket_traders bt ON bt.trader_id = t.id
+           JOIN trader_holdings th ON th.basket_id = bt.basket_id AND th.units > 0`
         )
         .all() as { id: number; wallet: string }[];
-      for (const t of traders) {
+
+      // WARM: leaderboard wallets, oldest-snapshot-first so the rotation is
+      // self-correcting — whatever went stalest gets picked up next.
+      const hotIds = new Set(hot.map((t) => t.id));
+      const warm = (
+        db
+          .prepare(
+            `SELECT t.id, t.wallet,
+                    COALESCE((SELECT MAX(ts) FROM wallet_snapshots s WHERE s.trader_id = t.id), 0) AS last_ts
+             FROM traders t
+             LEFT JOIN basket_traders bt ON bt.trader_id = t.id
+             WHERE bt.trader_id IS NOT NULL
+                OR (t.seed_stats IS NOT NULL AND t.seed_stats LIKE '%monthly%')
+             ORDER BY last_ts ASC
+             LIMIT ?`
+          )
+          .all(ROTATING_PER_SWEEP + hotIds.size) as { id: number; wallet: string }[]
+      ).filter((t) => !hotIds.has(t.id));
+
+      for (const t of [...hot, ...warm]) {
+        if (Date.now() - startedAt > SWEEP_BUDGET_MS) break; // never overrun the tick
         await snapshotTrader(t.id, t.wallet);
-        await new Promise((r) => setTimeout(r, 1500)); // stay polite to lite-api
+        await new Promise((r) => setTimeout(r, SWEEP_DELAY_MS));
       }
       pruneTrackingTables();
     } catch {
