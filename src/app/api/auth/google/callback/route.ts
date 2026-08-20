@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getDb } from "@/lib/db";
 import { createSession } from "@/lib/auth";
-import { googleEnabled, googleExchangeCode } from "@/lib/google";
+import { googleEnabled, googleExchangeCode, publicOrigin } from "@/lib/google";
 import { custodyConfigured, generateWallet } from "@/lib/custody";
 
 
@@ -22,7 +22,9 @@ function usernameFromEmail(db: ReturnType<typeof getDb>, email: string): string 
 }
 
 export async function GET(req: Request) {
-  const fail = (reason: string) => NextResponse.redirect(new URL(`/login?error=${reason}`, req.url));
+  const origin = publicOrigin(req);
+  const fail = (reason: string) =>
+    NextResponse.redirect(new URL(`/login?error=${reason}`, origin));
   if (!googleEnabled()) return fail("google-unconfigured");
 
   const url = new URL(req.url);
@@ -59,5 +61,5 @@ export async function GET(req: Request) {
     user = { id: userId };
   }
   await createSession(user.id);
-  return NextResponse.redirect(new URL("/dashboard", req.url));
+  return NextResponse.redirect(new URL("/dashboard", origin));
 }

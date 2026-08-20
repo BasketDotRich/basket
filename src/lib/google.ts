@@ -11,6 +11,28 @@ function redirectUri(): string {
   return process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:3000/api/auth/google/callback";
 }
 
+/**
+ * The origin the BROWSER used, not the one the container sees.
+ *
+ * Behind a reverse proxy (Railway, Vercel, Fly, nginx) `req.url` is the
+ * internal address — on Railway that is http://localhost:8080 — so building a
+ * redirect from it sends the user to a dead localhost URL. Trust the proxy's
+ * forwarded headers, and prefer an explicit SITE_URL when configured.
+ */
+export function publicOrigin(req: Request): string {
+  const configured = process.env.SITE_URL?.trim();
+  if (configured) return configured.replace(/\/$/, "");
+
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (host) {
+    const proto =
+      req.headers.get("x-forwarded-proto")?.split(",")[0].trim() ??
+      (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+    return `${proto}://${host}`;
+  }
+  return new URL(req.url).origin;
+}
+
 export function googleAuthUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,

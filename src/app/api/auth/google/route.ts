@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
-import { googleAuthUrl, googleEnabled } from "@/lib/google";
+import { googleAuthUrl, googleEnabled, publicOrigin } from "@/lib/google";
 
 export async function GET(req: Request) {
   if (!googleEnabled()) {
-    return NextResponse.redirect(new URL("/login?error=google-unconfigured", req.url));
+    return NextResponse.redirect(new URL("/login?error=google-unconfigured", publicOrigin(req)));
   }
   const state = randomBytes(16).toString("hex");
   const jar = await cookies();
