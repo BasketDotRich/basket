@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { cls, fmtUsd, timeAgo } from "@/lib/format";
 import { AccountWallet } from "@/components/AccountWallet";
 import { WalletHoldings } from "@/components/WalletHoldings";
+import { TelegramLink } from "@/components/TelegramLink";
 
 type Tx = {
   id: number;
@@ -66,6 +67,7 @@ export default function WalletPage() {
       <div className="mt-6">
         <AccountWallet />
         <div className="mt-4"><WalletHoldings /></div>
+        <div className="mt-4"><TelegramLink /></div>
       </div>
 
       <h2 className="mb-4 mt-10 text-lg font-semibold">Activity</h2>

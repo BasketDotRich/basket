@@ -244,6 +244,21 @@ export async function investInBasket(
       failure instanceof Error ? failure.message : "a leg failed"
     );
   }
+
+  void (async () => {
+    try {
+      const { alertUser, money } = await import("./telegram");
+      await alertUser(
+        userId,
+        "fill",
+        `${basketId}:${signatures[0] ?? Date.now()}`,
+        `✅ <b>Buy filled</b>\n\n<b>${basket.name}</b>\n${spentSol.toFixed(4)} SOL${sol ? ` ≈ ${money(spentSol * sol)}` : ""} across ${legs.length} token${legs.length === 1 ? "" : "s"}.`
+      );
+    } catch {
+      /* alerts never block a trade */
+    }
+  })();
+
   return { signatures };
 }
 
@@ -610,7 +625,7 @@ export async function checkExitRules(): Promise<void> {
       // legs as worthless. Without this, ONE unrouteable token would throw
       // UnpricedLegsError every tick and silently block the whole exit —
       // a stop-loss that never sells is worse than no stop-loss.
-      await redeemFromBasket(
+      const proceeds = await redeemFromBasket(
         r.user_id,
         r.basket_id,
         1,
@@ -619,6 +634,28 @@ export async function checkExitRules(): Promise<void> {
         { allowUnpriced: true }
       );
       clearPositionRule(r.user_id, r.basket_id);
+
+      void (async () => {
+        try {
+          const { alertUser, money } = await import("./telegram");
+          const icon = reason!.startsWith("Take-profit")
+            ? "🎯"
+            : reason!.startsWith("Stop-loss")
+              ? "🛡"
+              : "⌛";
+          await alertUser(
+            r.user_id,
+            "exit",
+            `${r.basket_id}:${Math.floor(Date.now() / 60_000)}`,
+            `${icon} <b>${reason}</b>\n\n<b>${basket?.name ?? "Basket"}</b> was closed automatically.\nProceeds: <b>${money(proceeds)}</b> back to your wallet as SOL.` +
+              (pos.hasDeadLeg
+                ? "\n\n⚠️ One leg had no route back to SOL and was written off."
+                : "")
+          );
+        } catch {
+          /* alerts never block an exit */
+        }
+      })();
     } catch {
       // partial fill or live-data hiccup — whatever sold is already recorded;
       // leave the rule armed so the next pass finishes the job

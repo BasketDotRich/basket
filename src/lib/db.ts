@@ -172,6 +172,35 @@ function createDb(): DatabaseSync {
       detail TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_treasury_ts ON treasury_ledger(ts DESC);
+
+    -- Telegram account linking. One Telegram chat maps to at most one account;
+    -- linking is proven by a short-lived single-use code generated while the
+    -- user is signed in on the site, so a chat id alone can never claim an
+    -- account. Read-only by design: the bot reports, it never moves funds.
+    CREATE TABLE IF NOT EXISTS telegram_links (
+      chat_id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      username TEXT,
+      linked_at INTEGER NOT NULL,
+      alerts_on INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_user ON telegram_links(user_id);
+    CREATE TABLE IF NOT EXISTS telegram_codes (
+      code TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      expires_at INTEGER NOT NULL,
+      used_at INTEGER
+    );
+    -- Outbound alert de-duplication: one row per (chat, kind, key) so a
+    -- restart or a slow tick can never spam the same alert twice.
+    CREATE TABLE IF NOT EXISTS telegram_sent (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      ts INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_sent ON telegram_sent(chat_id, kind, dedupe_key);
   `);
   seed(db);
   return db;
