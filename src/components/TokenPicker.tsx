@@ -152,7 +152,7 @@ export function TokenPicker({
             {source === "new"
               ? "Fresh listings — highest risk"
               : source === "curated"
-                ? `${curated.length} verified pump.fun graduates`
+                ? `${curated.length} curated tokens, every tier`
                 : "Live from Jupiter"}
           </span>
         </div>

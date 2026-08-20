@@ -26,7 +26,7 @@ export function Hero({
   topBasket: { id: number; name: string; change24h: number | null } | null;
 }) {
   const movers = [...market]
-    .filter((t) => t.change24h != null)
+    .filter((t) => t.change24h != null && Math.abs(t.change24h) < 400)
     .sort((a, b) => Math.abs(b.change24h!) - Math.abs(a.change24h!))
     .slice(0, 4);
 
@@ -68,7 +68,7 @@ export function Hero({
             <span className="live-dot inline-block h-1.5 w-1.5 rounded-full bg-brand" />
             LIVE SOLANA DATA
           </span>
-          <span className="chip">{market.length} PUMP.FUN GRADUATES</span>
+          <span className="chip">{market.length} TRACKED TOKENS</span>
           <span className="chip">{kolCount} TRACKED WALLETS</span>
         </div>
 

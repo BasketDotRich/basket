@@ -290,8 +290,9 @@ function seedContent(db: DatabaseSync) {
     }
   };
 
-  // Genre index presets over the pump.fun-only universe. Weighting follows
-  // the GMCI pattern: capped weighting, 25-35% max per asset.
+  // Genre index presets across the curated universe. Weighting follows the
+  // GMCI pattern: capped weighting, 25-35% max per asset, so no single coin
+  // can define a basket's outcome.
   addTokens(
     mkBasket("coin", "Pump Majors", "🏆",
       "The largest pump.fun graduates by market cap — ANSEM, FARTCOIN, JELLYJELLY, ARC, BAN."),
@@ -326,6 +327,46 @@ function seedContent(db: DatabaseSync) {
     mkBasket("coin", "Fresh 2026", "⚡",
       "This cycle's young breakouts: ANSEM, MANIFEST, Buttcoin, UWU. Higher risk, faster rotation."),
     [["ANSEM", 35], ["MANIFEST", 25], ["BUTTCOIN", 20], ["UWU", 20]]
+  );
+  addTokens(
+    mkBasket("coin", "Meme Majors", "👑",
+      "The memecoins everyone already knows — deepest liquidity, lowest slippage, the bluest chips the trenches have."),
+    [["Bonk", 22], ["$WIF", 22], ["PENGU", 20], ["BOME", 12], ["MEW", 12], ["SPX", 12]]
+  );
+  addTokens(
+    mkBasket("coin", "Solana Core", "⚙️",
+      "The rails the trenches run on: the launchpad, the router, the AMM and the DePIN networks."),
+    [["PUMP", 25], ["JUP", 25], ["RAY", 20], ["RENDER", 15], ["KMNO", 15]]
+  );
+  addTokens(
+    mkBasket("coin", "Cat Coins", "🐱",
+      "The eternal answer to the dogs — MEW, KET and the Doge-lineage cat CATE."),
+    [["MEW", 40], ["KET", 30], ["CATE", 30]]
+  );
+  addTokens(
+    mkBasket("coin", "Brainrot Index", "🧠",
+      "Italian-brainrot and TikTok character memes — Tung Tung Tung Sahur and the rest of the feed."),
+    [["TripleT", 40], ["LAYOOO", 30], ["67", 30]]
+  );
+  addTokens(
+    mkBasket("coin", "Politics", "🇺🇸",
+      "The election-cycle wing: the two tokens that priced a presidency."),
+    [["TRUMP", 65], ["MELANIA", 35]]
+  );
+  addTokens(
+    mkBasket("coin", "Nihilist Index", "🕳️",
+      "Coins whose entire pitch is that they do nothing: USELESS, the unstable coin, and Buttcoin."),
+    [["USELESS", 40], ["USDUC", 30], ["BUTTCOIN", 30]]
+  );
+  addTokens(
+    mkBasket("coin", "Micro Caps", "🔬",
+      "Small, young and violent — the sub-$10M end of the curated universe. Highest risk in the app."),
+    [["Jotchua", 20], ["MADE", 20], ["EYE", 20], ["CYBERLEEK", 20], ["TOAD", 20]]
+  );
+  addTokens(
+    mkBasket("coin", "NFT & IP", "🖼️",
+      "Tokens attached to real brands and licensed meme IP — Doodles, Trollface, graded cards."),
+    [["DOOD", 40], ["TROLL", 35], ["CARDS", 25]]
   );
 
   // Seed the entire Kolscan roster — every wallet selectable in the builder.

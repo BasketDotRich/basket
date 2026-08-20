@@ -13,6 +13,8 @@ export type MarketRowData = {
   genres: string[];
   price: number | null;
   change24h: number | null;
+  /** true when the 24h figure is meaningless because the token listed <24h ago */
+  newListing?: boolean;
   change7d: number | null;
   sparkline: number[];
   mcap: number | null;
@@ -34,6 +36,9 @@ export async function getMarketRows(): Promise<{
   ]);
   const rows = CURATED_TOKENS.map((t) => {
     const ov = t.coingeckoId ? overview[t.coingeckoId] : undefined;
+    // A five-figure "24h change" means the token had no price yesterday —
+    // that's a listing artifact, not performance. Label it, don't print it.
+    const rawCh = prices[t.mint]?.priceChange24h ?? ov?.change24h ?? null;
     return {
       mint: t.mint,
       symbol: t.symbol,
@@ -41,7 +46,8 @@ export async function getMarketRows(): Promise<{
       icon: t.icon,
       genres: t.genres,
       price: prices[t.mint]?.usdPrice ?? ov?.price ?? null,
-      change24h: prices[t.mint]?.priceChange24h ?? ov?.change24h ?? null,
+      change24h: rawCh != null && Math.abs(rawCh) <= 400 ? rawCh : null,
+      newListing: rawCh != null && Math.abs(rawCh) > 400,
       change7d: ov?.change7d ?? null,
       sparkline: ov?.sparkline7d ?? [],
       mcap: stats[t.mint]?.mcap ?? ov?.mcap ?? null,

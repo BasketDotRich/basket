@@ -98,6 +98,14 @@ export function investorCount(basketId: number): number {
   return a.n + b.n;
 }
 
+/**
+ * A token listed less than 24h ago reports a nonsense 24h change (it had no
+ * price yesterday) — five figures is common. Averaging that into a basket
+ * headline makes the whole number a lie, so those legs are excluded the same
+ * way an unpriced leg is: they simply don't contribute.
+ */
+const MAX_SANE_24H_PCT = 400;
+
 /** Weighted 24h performance. Trader baskets need ≥24h of real snapshots; null until then. */
 export async function basketChange24h(basket: BasketRow): Promise<number | null> {
   if (basket.kind === "coin") {
@@ -107,7 +115,7 @@ export async function basketChange24h(basket: BasketRow): Promise<number | null>
     let w = 0;
     for (const t of tokens) {
       const ch = prices[t.mint]?.priceChange24h;
-      if (ch != null) {
+      if (ch != null && Math.abs(ch) <= MAX_SANE_24H_PCT) {
         acc += t.weight * ch;
         w += t.weight;
       }

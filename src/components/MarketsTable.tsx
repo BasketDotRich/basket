@@ -15,6 +15,7 @@ export type MarketRow = {
   genres: string[];
   price: number | null;
   change24h: number | null;
+  newListing?: boolean;
   change7d: number | null;
   sparkline: number[];
   mcap: number | null;
@@ -191,7 +192,15 @@ export function MarketsTable({ rows: initialRows, genres }: { rows: MarketRow[];
                   </Link>
                 </td>
                 <td className="num py-2 text-right">{t.price != null ? fmtUsd(t.price) : "—"}</td>
-                <td className="py-2 text-right"><Delta value={t.change24h} className="num text-xs" /></td>
+                <td className="py-2 text-right">
+                  {t.newListing ? (
+                    <span className="chip chip-gold" title="Listed less than 24h ago — no meaningful 24h change yet">
+                      NEW
+                    </span>
+                  ) : (
+                    <Delta value={t.change24h} className="num text-xs" />
+                  )}
+                </td>
                 <td className="py-2 text-right"><Delta value={t.change7d} className="num text-xs" /></td>
                 <td className="py-2 pl-6"><Sparkline data={t.sparkline} width={92} height={24} /></td>
                 <td className="num py-2 text-right text-ink2">{compact(t.mcap)}</td>
