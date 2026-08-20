@@ -42,8 +42,8 @@ export default async function TreasuryPage() {
     { label: "Total fees accrued", value: fmtUsd(stats.totalInflow), sub: `${stats.basketsCreated} baskets created` },
     { label: "Performance fees", value: fmtUsd(stats.performanceFees), sub: `${PERFORMANCE_FEE_BPS / 100}% of realised profit` },
     { label: "Creation fees", value: fmtUsd(stats.creationFees), sub: `${stats.creationFeesSol.toFixed(1)} SOL collected` },
-    { label: "Deployed in baskets", value: fmtUsd(stats.deployedValue), sub: `${fmtUsd(stats.treasuryCash)} idle` },
-    { label: "Queued for burn", value: fmtUsd(stats.pendingBurn), sub: "treasury profit awaiting buyback" },
+    { label: "Collected on-chain", value: `${stats.collectedSol.toFixed(2)} SOL`, sub: "real transfers to the treasury wallet" },
+    { label: "Queued for burn", value: fmtUsd(stats.pendingBurn), sub: "awaiting buyback at token launch" },
     { label: "Burned to date", value: fmtUsd(stats.burned), sub: "executed on-chain" },
   ];
 
@@ -106,11 +106,12 @@ export default async function TreasuryPage() {
               to buyback &amp; burn.
             </li>
             <li>
-              <span className="chip">3</span> The treasury <strong className="text-ink">deploys
-              that capital into the most subscribed baskets</strong> rather than sitting idle.
+              <span className="chip">3</span> Fees are <strong className="text-ink">collected
+              on-chain</strong> — real SOL transfers to the treasury wallet, itemised below with
+              their transaction signatures.
             </li>
             <li>
-              <span className="chip">4</span> Profit the treasury realises is{" "}
+              <span className="chip">4</span> Everything collected is{" "}
               <strong className="text-ink">queued for buyback &amp; burn</strong> of the platform
               token — permanently reducing supply.
             </li>

@@ -13,5 +13,5 @@ export async function GET() {
        WHERE t.user_id = ? ORDER BY t.created_at DESC, t.id DESC LIMIT 100`
     )
     .all(user.id);
-  return NextResponse.json({ cash: user.cash, transactions });
+  return NextResponse.json({ transactions });
 }

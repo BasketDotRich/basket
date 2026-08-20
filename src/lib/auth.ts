@@ -9,7 +9,6 @@ export type SessionUser = {
   id: number;
   email: string;
   username: string;
-  cash: number;
   created_at: number;
 };
 
@@ -62,7 +61,7 @@ export async function getUser(): Promise<SessionUser | null> {
   const db = getDb();
   const row = db
     .prepare(
-      `SELECT u.id, u.email, u.username, u.cash, u.created_at, s.expires_at
+      `SELECT u.id, u.email, u.username, u.created_at, s.expires_at
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token = ?`
     )
@@ -72,5 +71,5 @@ export async function getUser(): Promise<SessionUser | null> {
     db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
     return null;
   }
-  return { id: row.id, email: row.email, username: row.username, cash: row.cash, created_at: row.created_at };
+  return { id: row.id, email: row.email, username: row.username, created_at: row.created_at };
 }

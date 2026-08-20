@@ -218,7 +218,7 @@ export default function NewBasketPage() {
       {signedIn === false && (
         <div className="mt-4 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
           You need an account to create baskets —{" "}
-          <Link href="/register" className="underline">sign up free</Link> — every account gets its own Solana wallet, plus a $10,000 practice balance to test strategies.
+          <Link href="/register" className="underline">sign up free</Link> — every account gets its own Solana wallet. Deposit SOL and trade for real.
         </div>
       )}
 
@@ -479,7 +479,7 @@ export default function NewBasketPage() {
             </div>
             {error && <div className="rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">⚠ {error}</div>}
             <p className="text-[11px] leading-relaxed text-ink3">
-              Creating charges the USD value of <strong className="text-ink2">0.5 SOL</strong> from your practice balance →
+              Creating charges <strong className="text-ink2">0.5 SOL</strong> on-chain from your account wallet →
               buyback &amp; burn. Redeems pay a <strong className="text-ink2">10% fee on profit
               only</strong>.
             </p>

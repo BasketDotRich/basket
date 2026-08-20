@@ -5,7 +5,6 @@ import { createSession } from "@/lib/auth";
 import { googleEnabled, googleExchangeCode } from "@/lib/google";
 import { custodyConfigured, generateWallet } from "@/lib/custody";
 
-const WELCOME_BALANCE = 10_000;
 
 function usernameFromEmail(db: ReturnType<typeof getDb>, email: string): string {
   const base =
@@ -47,20 +46,16 @@ export async function GET(req: Request) {
     const wallet = custodyConfigured() ? generateWallet() : null;
     const res = db
       .prepare(
-        "INSERT INTO users (email, username, pass_hash, cash, wallet_address, wallet_key, created_at) VALUES (?, ?, '!google!', ?, ?, ?, ?)"
+        "INSERT INTO users (email, username, pass_hash, cash, wallet_address, wallet_key, created_at) VALUES (?, ?, '!google!', 0, ?, ?, ?)"
       )
       .run(
         profile.email,
         username,
-        WELCOME_BALANCE,
         wallet?.address ?? null,
         wallet?.encryptedKey ?? null,
         now
       );
     const userId = Number(res.lastInsertRowid);
-    db.prepare(
-      "INSERT INTO transactions (user_id, type, amount, detail, created_at) VALUES (?, 'deposit', ?, 'Practice balance', ?)"
-    ).run(userId, WELCOME_BALANCE, now);
     user = { id: userId };
   }
   await createSession(user.id);

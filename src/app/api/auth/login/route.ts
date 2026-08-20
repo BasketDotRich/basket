@@ -14,8 +14,8 @@ export async function POST(req: Request) {
 
   const db = getDb();
   const user = db
-    .prepare("SELECT id, email, username, pass_hash, cash FROM users WHERE email = ?")
-    .get(email) as { id: number; email: string; username: string; pass_hash: string; cash: number } | undefined;
+    .prepare("SELECT id, email, username, pass_hash FROM users WHERE email = ?")
+    .get(email) as { id: number; email: string; username: string; pass_hash: string; } | undefined;
 
   if (!user || user.pass_hash.startsWith("!") || !verifyPassword(password, user.pass_hash)) {
     return NextResponse.json(
@@ -27,6 +27,6 @@ export async function POST(req: Request) {
   await createSession(user.id);
   return NextResponse.json({
     ok: true,
-    user: { id: user.id, email: user.email, username: user.username, cash: user.cash },
+    user: { id: user.id, email: user.email, username: user.username, },
   });
 }

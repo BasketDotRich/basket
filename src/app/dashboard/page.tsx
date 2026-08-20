@@ -7,6 +7,8 @@ import {
   getSnapshots,
   recordSnapshot,
 } from "@/lib/portfolio";
+import { getAccountWallet, getSolBalance } from "@/lib/accounts";
+import { solPriceUsd } from "@/lib/treasury";
 import { fmtPct, fmtQty, fmtUsd } from "@/lib/format";
 import { StatTile } from "@/components/StatTile";
 import { Onboarding, type OnboardingState } from "@/components/Onboarding";
@@ -33,10 +35,24 @@ export default async function DashboardPage() {
     armedRule: !!db.prepare("SELECT 1 FROM position_rules WHERE user_id = ? LIMIT 1").get(user.id),
     createdBasket: !!db.prepare("SELECT 1 FROM baskets WHERE owner_id = ? LIMIT 1").get(user.id),
   };
-  const { cash, positions, totalValue, totalCost } = await getPortfolio(user.id);
+  const { positions, totalValue, totalCost } = await getPortfolio(user.id);
   const snapshots = getSnapshots(user.id);
 
-  const invested = totalValue - cash;
+  // real wallet SOL, straight from the chain
+  let walletSol: number | null = null;
+  let walletUsd: number | null = null;
+  try {
+    const w = getAccountWallet(user.id);
+    if (w) {
+      const [lamports, solPrice] = await Promise.all([getSolBalance(w.address), solPriceUsd()]);
+      walletSol = lamports / 1_000_000_000;
+      walletUsd = solPrice != null ? walletSol * solPrice : null;
+    }
+  } catch {
+    // RPC hiccup — the tile shows a dash
+  }
+
+  const invested = totalValue;
   const pnl = invested - totalCost;
   const pnlPct = totalCost > 0 ? (pnl / totalCost) * 100 : null;
 
@@ -52,7 +68,7 @@ export default async function DashboardPage() {
 
   const donutSlices = [
     ...positions.map((p) => ({ label: p.basket.name, value: p.value })),
-    { label: "Cash", value: cash },
+    ...(walletUsd != null && walletUsd > 0 ? [{ label: "Wallet SOL", value: walletUsd }] : []),
   ];
 
   return (
@@ -77,7 +93,15 @@ export default async function DashboardPage() {
           value={`${pnl >= 0 ? "+" : "−"}${fmtUsd(Math.abs(pnl))}`}
           sub={<Delta value={pnlPct} suffix="vs cost" />}
         />
-        <StatTile label="Cash" value={fmtUsd(cash)} sub={<Link href="/wallet" className="text-brand hover:underline">Manage wallet →</Link>} />
+        <StatTile
+          label="Wallet SOL"
+          value={walletSol != null ? `${walletSol.toFixed(3)} SOL` : "—"}
+          sub={
+            <Link href="/wallet" className="text-brand hover:underline">
+              {walletUsd != null ? `≈ ${fmtUsd(walletUsd)} · ` : ""}Manage wallet →
+            </Link>
+          }
+        />
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-5">
@@ -104,7 +128,12 @@ export default async function DashboardPage() {
       <h2 className="mb-4 mt-10 text-lg font-semibold">Your positions</h2>
       {positions.length === 0 ? (
         <div className="card p-10 text-center">
-          <p className="text-ink2">No positions yet — you have {fmtUsd(cash)} available to deploy.</p>
+          <p className="text-ink2">
+            No positions yet —{" "}
+            {walletSol != null && walletSol > 0.015
+              ? `you have ${walletSol.toFixed(3)} SOL ready to deploy.`
+              : "deposit SOL to your wallet and buy your first basket."}
+          </p>
           <Link href="/baskets" className="btn-brand mt-4 inline-block rounded-xl px-5 py-2.5 text-sm">
             Find a basket
           </Link>

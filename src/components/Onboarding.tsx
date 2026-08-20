@@ -16,7 +16,7 @@ const STEPS: {
   {
     key: "invested",
     title: "Take your first position",
-    body: "Pick a genre index — Pump Majors, AI Agents, Chan Culture — and invest. Your practice balance starts at $10,000.",
+    body: "Pick a genre index — Pump Majors, AI Agents, Chan Culture — and invest real SOL. Tokens land in your own wallet.",
     cta: { href: "/baskets", label: "Browse baskets" },
   },
   {

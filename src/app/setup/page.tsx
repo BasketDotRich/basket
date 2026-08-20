@@ -174,8 +174,8 @@ export default async function SetupPage() {
             <Link href="/register" className="text-brand hover:underline">
               sign-up page
             </Link>
-            . New Google accounts get a username derived from the email, their own Solana
-            wallet, and the same $10,000 practice balance.
+            . New Google accounts get a username derived from the email and their own
+            Solana wallet.
           </p>
         </div>
       )}

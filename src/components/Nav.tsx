@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { getUser } from "@/lib/auth";
-import { fmtUsd } from "@/lib/format";
 import { LogoutButton } from "./LogoutButton";
 import { MobileNav } from "./MobileNav";
 
@@ -35,9 +34,9 @@ export async function Nav() {
               <Link
                 href="/wallet"
                 className="num rounded-lg border border-hairline bg-card px-3 py-1 text-[13px] text-ink2 hover:text-ink"
-                title="Available balance"
+                title="Your wallet"
               >
-                {fmtUsd(user.cash, { compact: true })}
+                Wallet
               </Link>
               <Link
                 href="/baskets/new"

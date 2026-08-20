@@ -3,7 +3,6 @@ import { getDb } from "@/lib/db";
 import { createSession, hashPassword } from "@/lib/auth";
 import { custodyConfigured, generateWallet } from "@/lib/custody";
 
-const WELCOME_BALANCE = 10_000;
 
 export async function POST(req: Request) {
   let body: { email?: string; username?: string; password?: string };
@@ -41,22 +40,17 @@ export async function POST(req: Request) {
   const wallet = custodyConfigured() ? generateWallet() : null;
   const res = db
     .prepare(
-      "INSERT INTO users (email, username, pass_hash, cash, wallet_address, wallet_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO users (email, username, pass_hash, cash, wallet_address, wallet_key, created_at) VALUES (?, ?, ?, 0, ?, ?, ?)"
     )
     .run(
       email,
       username,
       hashPassword(password),
-      WELCOME_BALANCE,
       wallet?.address ?? null,
       wallet?.encryptedKey ?? null,
       now
     );
   const userId = Number(res.lastInsertRowid);
-  db.prepare(
-    "INSERT INTO transactions (user_id, type, amount, detail, created_at) VALUES (?, 'deposit', ?, 'Practice balance', ?)"
-  ).run(userId, WELCOME_BALANCE, now);
-
   await createSession(userId);
-  return NextResponse.json({ ok: true, user: { id: userId, email, username, cash: WELCOME_BALANCE } });
+  return NextResponse.json({ ok: true, user: { id: userId, email, username } });
 }

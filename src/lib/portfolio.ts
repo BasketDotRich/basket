@@ -1,6 +1,5 @@
 import { getDb } from "./db";
 import { getPrices } from "./prices";
-import { takePerformanceFee } from "./treasury";
 import {
   ensureWalletRefresher,
   getTraderBasketNavLive,
@@ -128,86 +127,99 @@ export async function basketChange24h(basket: BasketRow): Promise<number | null>
   return w > 0 ? acc / w : null;
 }
 
-// ---------- investing ----------
+// ---------- investing (REAL on-chain execution, no virtual money) ----------
 
 export class InvestError extends Error {}
 
-const PRICE_MAX_STALE_MS = 5 * 60_000; // trades never execute on prices older than this
+const PRICE_MAX_STALE_MS = 5 * 60_000; // valuations never use prices older than this
+const LAMPORTS_PER_SOL = 1_000_000_000;
+const MIN_INVEST_SOL = 0.01;
 
-/** Debit cash atomically; throws if the balance no longer covers the amount. */
-function debitCashGuarded(userId: number, amount: number): void {
-  const r = getDb()
-    .prepare("UPDATE users SET cash = cash - ? WHERE id = ? AND cash >= ? - 1e-9")
-    .run(amount, userId, amount);
-  if (r.changes === 0) throw new InvestError("Insufficient balance — add funds first");
-}
-
-export async function investInBasket(userId: number, basketId: number, amount: number): Promise<void> {
+/**
+ * Invest by executing REAL Jupiter swaps from the account wallet's SOL into
+ * every leg of the basket. The tokens land in the user's own wallet; the
+ * holdings table is the per-basket ledger of what those swaps acquired, so
+ * P&L, exit rules and redeems know which tokens belong to which thesis.
+ */
+export async function investInBasket(
+  userId: number,
+  basketId: number,
+  amountSol: number
+): Promise<{ signatures: string[] }> {
   ensureRulesEngine();
   const db = getDb();
   const basket = getBasket(basketId);
   if (!basket || (!basket.is_public && basket.owner_id !== userId)) {
     throw new InvestError("Basket not found");
   }
-  if (!Number.isFinite(amount) || amount < 1) throw new InvestError("Minimum investment is $1");
+  if (basket.kind !== "coin") {
+    throw new InvestError(
+      "Trader baskets are tracking-only for now — copy-trade execution is coming"
+    );
+  }
+  if (!Number.isFinite(amountSol) || amountSol < MIN_INVEST_SOL) {
+    throw new InvestError(`Minimum investment is ${MIN_INVEST_SOL} SOL`);
+  }
 
-  const user = db.prepare("SELECT cash FROM users WHERE id = ?").get(userId) as { cash: number };
-  if (user.cash < amount - 1e-9) throw new InvestError("Insufficient balance — add funds first");
+  const tokens = getBasketTokens(basketId);
+  if (tokens.length === 0) throw new InvestError("Basket has no tokens");
 
-  if (basket.kind === "coin") {
-    const tokens = getBasketTokens(basketId);
-    if (tokens.length === 0) throw new InvestError("Basket has no tokens");
-    const prices = await getPrices(tokens.map((t) => t.mint), { maxStaleMs: PRICE_MAX_STALE_MS });
-    for (const t of tokens) {
-      if (!prices[t.mint] || prices[t.mint].usdPrice <= 0) {
-        throw new InvestError(`Live price unavailable for ${t.symbol} — try again shortly`);
-      }
-    }
-    db.exec("BEGIN");
-    try {
-      for (const t of tokens) {
-        const usd = amount * t.weight;
-        const qty = usd / prices[t.mint].usdPrice;
-        db.prepare(
-          `INSERT INTO holdings (user_id, basket_id, mint, qty, cost) VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(user_id, basket_id, mint) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost`
-        ).run(userId, basketId, t.mint, qty, usd);
-      }
-      debitCashGuarded(userId, amount);
+  const { getAccountWallet, getSolBalance, signAndSendForAccount, WITHDRAW_RESERVE_LAMPORTS } =
+    await import("./accounts");
+  const wallet = getAccountWallet(userId);
+  if (!wallet) throw new InvestError("This account has no wallet yet");
+  const lamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
+  const balance = await getSolBalance(wallet.address);
+  if (lamports + WITHDRAW_RESERVE_LAMPORTS > balance) {
+    const max = Math.max(0, balance - WITHDRAW_RESERVE_LAMPORTS) / LAMPORTS_PER_SOL;
+    throw new InvestError(
+      max >= MIN_INVEST_SOL
+        ? `Not enough SOL — you can invest up to ${max.toFixed(4)} SOL`
+        : "Deposit SOL to your account wallet first"
+    );
+  }
+
+  const { quoteBasketLegs, buildSwapTransactions } = await import("./swap");
+  const { solPriceUsd } = await import("./treasury");
+  const legs = await quoteBasketLegs(
+    tokens.map((t) => ({ mint: t.mint, symbol: t.symbol, weight: t.weight })),
+    lamports,
+    100
+  );
+  const txs = await buildSwapTransactions(legs, wallet.address);
+  const signatures = await signAndSendForAccount(userId, txs);
+
+  // Ledger AFTER execution: record what the swaps actually bought (quote
+  // outAmount, decimals-adjusted) with a USD cost basis at the live SOL price.
+  const sol = (await solPriceUsd()) ?? 0;
+  const decimalsOf = new Map(tokens.map((t) => [t.mint, t.decimals]));
+  db.exec("BEGIN");
+  try {
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      const qty = Number(leg.outAmount) / 10 ** (decimalsOf.get(leg.mint) ?? 6);
+      const usd = (leg.lamportsIn / LAMPORTS_PER_SOL) * sol;
       db.prepare(
-        "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'invest', ?, ?, ?, ?)"
-      ).run(userId, basketId, amount, `Invested in ${basket.name}`, Date.now());
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
+        `INSERT INTO holdings (user_id, basket_id, mint, qty, cost) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, basket_id, mint) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost`
+      ).run(userId, basketId, leg.mint, qty, usd);
     }
-  } else {
-    let nav: number;
-    try {
-      nav = await getTraderBasketNavLive(basket.id, { strict: true });
-    } catch {
-      throw new InvestError("NAV data temporarily unavailable — try again shortly");
-    }
-    if (!Number.isFinite(nav) || nav <= 0) throw new InvestError("NAV unavailable — try again shortly");
-    const units = amount / nav;
-    db.exec("BEGIN");
-    try {
-      db.prepare(
-        `INSERT INTO trader_holdings (user_id, basket_id, units, cost) VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id, basket_id) DO UPDATE SET units = units + excluded.units, cost = cost + excluded.cost`
-      ).run(userId, basketId, units, amount);
-      debitCashGuarded(userId, amount);
-      db.prepare(
-        "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'invest', ?, ?, ?, ?)"
-      ).run(userId, basketId, amount, `Invested in ${basket.name} @ NAV ${nav.toFixed(2)}`, Date.now());
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
+    db.prepare(
+      "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'invest', ?, ?, ?, ?)"
+    ).run(
+      userId,
+      basketId,
+      amountSol * sol,
+      `Invested ${amountSol} SOL in ${basket.name} · ${signatures.join(" ")}`,
+      Date.now()
+    );
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
   }
   await recordSnapshot(userId, true);
+  return { signatures };
 }
 
 /**
@@ -231,125 +243,127 @@ export async function redeemFromBasket(
   const db = getDb();
   const basket = getBasket(basketId);
   if (!basket) throw new InvestError("Basket not found");
+  if (basket.kind !== "coin") {
+    throw new InvestError("Trader baskets are tracking-only — there is nothing to redeem");
+  }
   if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
     throw new InvestError("Fraction must be between 0 and 1");
   }
 
-  // All async pricing happens BEFORE the transaction; the authoritative position
-  // read happens INSIDE it, so concurrent redeems can never double-pay.
-  let proceeds = 0;
+  const rows = db
+    .prepare(
+      `SELECT h.mint, h.qty, h.cost, tm.symbol, tm.decimals
+       FROM holdings h JOIN token_meta tm ON tm.mint = h.mint
+       WHERE h.user_id = ? AND h.basket_id = ? AND h.qty > 0`
+    )
+    .all(userId, basketId) as {
+    mint: string; qty: number; cost: number; symbol: string; decimals: number;
+  }[];
+  if (rows.length === 0) {
+    if (!basket.is_public && basket.owner_id !== userId) throw new InvestError("Basket not found");
+    throw new InvestError("Nothing to redeem in this basket");
+  }
+
+  const { getAccountWallet, signAndSendForAccount } = await import("./accounts");
+  const wallet = getAccountWallet(userId);
+  if (!wallet) throw new InvestError("This account has no wallet yet");
+
+  // Actual on-chain balances cap what we can sell — the ledger can drift if
+  // the user sold or moved tokens from the wallet page. Never quote more than
+  // the wallet really holds.
+  const { getAccountHoldings } = await import("./trading");
+  const live = await getAccountHoldings(userId);
+  const liveRaw = new Map(live.tokens.map((t) => [t.mint, BigInt(t.rawAmount)]));
+
+  const toSell = rows.map((r) => {
+    const ledgerRaw = BigInt(Math.floor(r.qty * fraction * 10 ** r.decimals));
+    const walletRaw = liveRaw.get(r.mint) ?? BigInt(0);
+    return { ...r, rawAmount: ledgerRaw < walletRaw ? ledgerRaw : walletRaw };
+  });
+
+  const { quoteExitLegs, buildSwapTransactions } = await import("./swap");
+  const { solPriceUsd, takePerformanceFee: takeFee, treasuryWallet } = await import("./treasury");
+  const sellable = toSell.filter((s) => s.rawAmount > BigInt(0));
+  const quoted = await quoteExitLegs(
+    sellable.map((s) => ({ mint: s.mint, symbol: s.symbol, rawAmount: s.rawAmount.toString() })),
+    150
+  );
+  const quotedMints = new Set(quoted.map((q) => q.mint));
+  const unrouteable = sellable.filter((s) => !quotedMints.has(s.mint));
+  if (unrouteable.length > 0 && !opts.allowUnpriced) {
+    // dead legs: no route back to SOL — the caller can consent to write-off
+    throw new UnpricedLegsError(unrouteable.map((s) => s.symbol));
+  }
+
+  let signatures: string[] = [];
+  let proceedsSol = 0;
+  if (quoted.length > 0) {
+    const txs = await buildSwapTransactions(quoted, wallet.address);
+    signatures = await signAndSendForAccount(userId, txs);
+    proceedsSol = quoted.reduce((s, q) => s + Number(q.outAmount) / LAMPORTS_PER_SOL, 0);
+  }
+
+  const sol = (await solPriceUsd()) ?? 0;
+  const proceeds = proceedsSol * sol;
+  const costRedeemed = rows.reduce((s, r) => s + r.cost * fraction, 0);
+
+  // Performance fee: 10% of realised profit, settled as a REAL SOL transfer to
+  // the treasury wallet (accrued on the ledger regardless, so nothing is lost
+  // if the transfer or config is unavailable).
   let fee = 0;
-  let net = 0;
-  if (basket.kind === "coin") {
-    const mintRows = db
-      .prepare("SELECT mint FROM holdings WHERE user_id = ? AND basket_id = ? AND qty > 0")
-      .all(userId, basketId) as { mint: string }[];
-    if (mintRows.length === 0) {
-      if (!basket.is_public && basket.owner_id !== userId) throw new InvestError("Basket not found");
-      throw new InvestError("Nothing to redeem in this basket");
+  let feeSig: string | null = null;
+  const profit = proceeds - costRedeemed;
+  const dest = treasuryWallet();
+  if (profit > 0 && sol > 0) {
+    const feeUsd = (profit * 1000) / 10_000;
+    const feeSol = feeUsd / sol;
+    if (dest && feeSol >= 0.0005) {
+      try {
+        const { buildSolTransfer } = await import("./swap");
+        const tx = await buildSolTransfer(wallet.address, dest, Math.floor(feeSol * LAMPORTS_PER_SOL));
+        [feeSig] = await signAndSendForAccount(userId, [tx]);
+      } catch {
+        feeSig = null; // accrued below either way
+      }
     }
-    const prices = await getPrices(mintRows.map((r) => r.mint), { maxStaleMs: PRICE_MAX_STALE_MS });
-    db.exec("BEGIN");
-    try {
-      const rows = db
-        .prepare("SELECT mint, qty, cost FROM holdings WHERE user_id = ? AND basket_id = ? AND qty > 0")
-        .all(userId, basketId) as { mint: string; qty: number; cost: number }[];
-      if (rows.length === 0) throw new InvestError("Nothing to redeem in this basket");
-      const unpriced = rows.filter((r) => !prices[r.mint] || prices[r.mint].usdPrice <= 0);
-      if (unpriced.length > 0 && !opts.allowUnpriced) {
-        const meta = db.prepare("SELECT mint, symbol FROM token_meta").all() as {
-          mint: string; symbol: string;
-        }[];
-        const symbolOf = new Map(meta.map((m) => [m.mint, m.symbol]));
-        throw new UnpricedLegsError(
-          unpriced.map((r) => symbolOf.get(r.mint) ?? `${r.mint.slice(0, 4)}…`)
+    fee = takeFee({
+      userId, basketId, basketName: basket.name, proceeds, costRedeemed,
+      settledSol: feeSig ? feeSol : null, settledSig: feeSig,
+    });
+  }
+  const net = proceeds - (feeSig ? fee : 0);
+
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) {
+      if (fraction >= 0.9999) {
+        db.prepare("DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?").run(
+          userId, basketId, r.mint
         );
-      }
-      let costRedeemed = 0;
-      for (const r of rows) {
-        costRedeemed += r.cost * fraction;
-        // unpriced legs are written off at $0 (explicitly consented above)
-        proceeds += r.qty * fraction * (prices[r.mint]?.usdPrice ?? 0);
-        if (fraction >= 0.9999) {
-          db.prepare("DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?").run(
-            userId, basketId, r.mint
-          );
-        } else {
-          db.prepare(
-            "UPDATE holdings SET qty = qty * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ? AND mint = ?"
-          ).run(1 - fraction, 1 - fraction, userId, basketId, r.mint);
-        }
-      }
-      if (fraction >= 0.9999) {
-        // exit rules belong to the position, not the basket — retire them with it
-        db.prepare("DELETE FROM position_rules WHERE user_id = ? AND basket_id = ?").run(userId, basketId);
-      }
-      fee = takePerformanceFee({
-        userId, basketId, basketName: basket.name, proceeds, costRedeemed,
-      });
-      net = proceeds - fee;
-      db.prepare("UPDATE users SET cash = cash + ? WHERE id = ?").run(net, userId);
-      db.prepare(
-        "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'redeem', ?, ?, ?, ?)"
-      ).run(
-        userId, basketId, net,
-        (note ?? `Redeemed ${(fraction * 100).toFixed(0)}% of ${basket.name}`) +
-          (fee > 0 ? ` · $${fee.toFixed(2)} performance fee → burn treasury` : ""),
-        Date.now()
-      );
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-  } else {
-    const exists = db
-      .prepare("SELECT units FROM trader_holdings WHERE user_id = ? AND basket_id = ? AND units > 0")
-      .get(userId, basketId) as { units: number } | undefined;
-    if (!exists) {
-      if (!basket.is_public && basket.owner_id !== userId) throw new InvestError("Basket not found");
-      throw new InvestError("Nothing to redeem in this basket");
-    }
-    let nav: number;
-    try {
-      nav = await getTraderBasketNavLive(basket.id, { strict: true });
-    } catch {
-      throw new InvestError("NAV data temporarily unavailable — try again shortly");
-    }
-    db.exec("BEGIN");
-    try {
-      const row = db
-        .prepare("SELECT units, cost FROM trader_holdings WHERE user_id = ? AND basket_id = ? AND units > 0")
-        .get(userId, basketId) as { units: number; cost: number } | undefined;
-      if (!row) throw new InvestError("Nothing to redeem in this basket");
-      proceeds = row.units * fraction * nav;
-      const costRedeemed = row.cost * fraction;
-      if (fraction >= 0.9999) {
-        db.prepare("DELETE FROM trader_holdings WHERE user_id = ? AND basket_id = ?").run(userId, basketId);
-        db.prepare("DELETE FROM position_rules WHERE user_id = ? AND basket_id = ?").run(userId, basketId);
       } else {
         db.prepare(
-          "UPDATE trader_holdings SET units = units * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ?"
-        ).run(1 - fraction, 1 - fraction, userId, basketId);
+          "UPDATE holdings SET qty = qty * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ? AND mint = ?"
+        ).run(1 - fraction, 1 - fraction, userId, basketId, r.mint);
       }
-      fee = takePerformanceFee({
-        userId, basketId, basketName: basket.name, proceeds, costRedeemed,
-      });
-      net = proceeds - fee;
-      db.prepare("UPDATE users SET cash = cash + ? WHERE id = ?").run(net, userId);
-      db.prepare(
-        "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'redeem', ?, ?, ?, ?)"
-      ).run(
-        userId, basketId, net,
-        (note ?? `Redeemed ${(fraction * 100).toFixed(0)}% of ${basket.name}`) +
-          (fee > 0 ? ` · $${fee.toFixed(2)} performance fee → burn treasury` : ""),
-        Date.now()
-      );
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
     }
+    if (fraction >= 0.9999) {
+      // exit rules belong to the position, not the basket — retire them with it
+      db.prepare("DELETE FROM position_rules WHERE user_id = ? AND basket_id = ?").run(userId, basketId);
+    }
+    db.prepare(
+      "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'redeem', ?, ?, ?, ?)"
+    ).run(
+      userId, basketId, net,
+      (note ?? `Redeemed ${(fraction * 100).toFixed(0)}% of ${basket.name}`) +
+        ` · ${proceedsSol.toFixed(4)} SOL to wallet` +
+        (fee > 0 ? ` · $${fee.toFixed(2)} performance fee → buyback & burn` : "") +
+        (signatures.length ? ` · ${signatures.join(" ")}` : ""),
+      Date.now()
+    );
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
   }
   await recordSnapshot(userId, true);
   return net;
@@ -511,8 +525,6 @@ export function ensureRulesEngine(): void {
     globalThis.__bRulesBusy = true;
     try {
       await checkExitRules();
-      const { deployTreasury } = await import("./treasury");
-      await deployTreasury();
     } catch {
       // next tick retries
     } finally {
@@ -550,14 +562,12 @@ export type Position = {
 };
 
 export async function getPortfolio(userId: number): Promise<{
-  cash: number;
   positions: Position[];
   totalValue: number;
   totalCost: number;
 }> {
   ensureRulesEngine();
   const db = getDb();
-  const user = db.prepare("SELECT cash FROM users WHERE id = ?").get(userId) as { cash: number };
 
   const coinRows = db
     .prepare(
@@ -637,9 +647,9 @@ export async function getPortfolio(userId: number): Promise<{
   for (const p of positions) p.rule = ruleByBasket.get(p.basket.id) ?? null;
 
   positions.sort((a, b) => b.value - a.value);
-  const totalValue = positions.reduce((s, p) => s + p.value, 0) + user.cash;
+  const totalValue = positions.reduce((s, p) => s + p.value, 0);
   const totalCost = positions.reduce((s, p) => s + p.cost, 0);
-  return { cash: user.cash, positions, totalValue, totalCost };
+  return { positions, totalValue, totalCost };
 }
 
 const SNAPSHOT_MIN_GAP_MS = 10 * 60_000;

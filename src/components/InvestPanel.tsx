@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { cls, fmtUsd } from "@/lib/format";
 
 export type PanelRule = {
@@ -11,17 +11,19 @@ export type PanelRule = {
   close_at: number | null;
 } | null;
 
+/**
+ * REAL on-chain investing. Invest swaps the account wallet's SOL into every
+ * basket leg; redeem swaps the position back to SOL. No virtual balances.
+ */
 export function InvestPanel({
   basketId,
   signedIn,
-  cash,
   myValue,
   rule,
   onDone,
 }: {
   basketId: number;
   signedIn: boolean;
-  cash: number;
   myValue: number;
   rule?: PanelRule;
   onDone?: () => void;
@@ -31,13 +33,32 @@ export function InvestPanel({
   const [amount, setAmount] = useState("");
   const [fraction, setFraction] = useState(0.5);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string; sigs?: string[] } | null>(null);
   const [writeOff, setWriteOff] = useState<string[] | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [tpPct, setTpPct] = useState<number | null>(null);
   const [slPct, setSlPct] = useState<number | null>(null);
   const [closeDays, setCloseDays] = useState<number | null>(null);
   const [rulesDirty, setRulesDirty] = useState(false);
+  const [sol, setSol] = useState<number | null>(null);
+  const [solPrice, setSolPrice] = useState<number | null>(null);
+
+  const loadBalance = useCallback(() => {
+    fetch("/api/wallet/account", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) {
+          setSol(d.sol ?? 0);
+          setSolPrice(d.solPrice ?? null);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (signedIn) loadBalance();
+  }, [signedIn, loadBalance]);
 
   // Show the rules that are actually armed, so a top-up (or an edit) starts
   // from reality instead of a blank slate that could read as "no rules".
@@ -56,7 +77,7 @@ export function InvestPanel({
     return (
       <div className="card p-6 text-center">
         <p className="text-sm text-ink2">Create a free account to take a position in this basket.</p>
-        <Link href="/register" className="btn-brand mt-4 inline-block rounded-xl px-6 py-2.5 text-sm font-semibold">
+        <Link href="/register" className="btn-brand mt-4 inline-block rounded-xl px-6 py-2.5 text-sm">
           Open an account
         </Link>
       </div>
@@ -71,8 +92,8 @@ export function InvestPanel({
       const body =
         tab === "invest"
           ? rulesDirty
-            ? { amount: Number(amount), tpPct, slPct, closeDays }
-            : { amount: Number(amount) }
+            ? { amountSol: Number(amount), tpPct, slPct, closeDays }
+            : { amountSol: Number(amount) }
           : { fraction, allowUnpriced };
       const res = await fetch(url, {
         method: "POST",
@@ -90,18 +111,21 @@ export function InvestPanel({
         return;
       }
       setWriteOff(null);
+      setConfirming(false);
       setMsg({
         kind: "ok",
         text:
           tab === "invest"
-            ? `Invested ${fmtUsd(Number(amount))}`
-            : `Redeemed ${fmtUsd(data.proceeds)} back to balance`,
+            ? `Bought on-chain with ${amount} SOL`
+            : `Sold ${(fraction * 100).toFixed(0)}% back to SOL — ${fmtUsd(data.proceeds)}`,
+        sigs: data.signatures,
       });
       setAmount("");
+      loadBalance();
       router.refresh();
       onDone?.();
     } catch {
-      setMsg({ kind: "err", text: "Network error — try again" });
+      setMsg({ kind: "err", text: "Network error — check your wallet on Solscan before retrying" });
     } finally {
       setBusy(false);
     }
@@ -136,7 +160,9 @@ export function InvestPanel({
   }
 
   const amountNum = Number(amount);
-  const investValid = Number.isFinite(amountNum) && amountNum >= 1 && amountNum <= cash + 1e-9;
+  const maxSol = sol != null ? Math.max(0, sol - 0.005) : 0;
+  const investValid = Number.isFinite(amountNum) && amountNum >= 0.01 && amountNum <= maxSol;
+  const needsDeposit = sol != null && sol < 0.015;
 
   return (
     <div className="card p-5">
@@ -151,6 +177,7 @@ export function InvestPanel({
             onClick={() => {
               setTab(t);
               setMsg(null);
+              setConfirming(false);
             }}
           >
             {t}
@@ -161,37 +188,62 @@ export function InvestPanel({
       {tab === "invest" ? (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between text-xs text-ink3">
-            <span>Available cash</span>
-            <span className="tabular-nums">{fmtUsd(cash)}</span>
+            <span>Wallet SOL</span>
+            <span className="num">
+              {sol != null ? `${sol.toFixed(4)} SOL` : "…"}
+              {sol != null && solPrice != null && (
+                <span className="ml-1.5 text-ink3">≈ {fmtUsd(sol * solPrice)}</span>
+              )}
+            </span>
           </div>
-          <div className="relative">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-ink3">$</span>
-            <input
-              inputMode="decimal"
-              placeholder="0.00"
-              aria-label="Amount to invest in USD"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-              className="w-full rounded-xl border border-hairline bg-card2 py-2.5 pl-8 pr-4 text-lg tabular-nums outline-none focus:border-brand"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {[100, 500, 1000].map((v) => (
-              <button
-                key={v}
-                onClick={() => setAmount(String(Math.min(v, Math.floor(cash))))}
-                className="rounded-full border border-hairline px-3 py-1 text-xs text-ink2 hover:border-brand hover:text-ink"
-              >
-                ${v.toLocaleString()}
-              </button>
-            ))}
-            <button
-              onClick={() => setAmount(cash > 0 ? (Math.floor(cash * 100) / 100).toString() : "")}
-              className="rounded-full border border-hairline px-3 py-1 text-xs text-ink2 hover:border-brand hover:text-ink"
-            >
-              Max
-            </button>
-          </div>
+
+          {needsDeposit ? (
+            <div className="rounded-lg border border-hairline bg-card2 p-3 text-xs leading-relaxed text-ink2">
+              Deposit SOL to your account wallet first —{" "}
+              <Link href="/wallet" className="text-brand hover:underline">
+                your deposit address is on the wallet page
+              </Link>
+              .
+            </div>
+          ) : (
+            <>
+              <div className="relative">
+                <input
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  aria-label="Amount to invest in SOL"
+                  value={amount}
+                  onChange={(e) => {
+                    setAmount(e.target.value.replace(/[^0-9.]/g, ""));
+                    setConfirming(false);
+                  }}
+                  className="num w-full rounded-xl border border-hairline bg-card2 py-2.5 pl-4 pr-16 text-lg outline-none focus:border-brand"
+                />
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-ink3">SOL</span>
+              </div>
+              {investValid && solPrice != null && (
+                <p className="num text-right text-[11px] text-ink3">≈ {fmtUsd(amountNum * solPrice)}</p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {[0.05, 0.1, 0.5].map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => { setAmount(String(v)); setConfirming(false); }}
+                    className="rounded-full border border-hairline px-3 py-1 text-xs text-ink2 hover:border-brand hover:text-ink"
+                  >
+                    {v} SOL
+                  </button>
+                ))}
+                <button
+                  onClick={() => { setAmount(maxSol > 0 ? maxSol.toFixed(4) : ""); setConfirming(false); }}
+                  className="rounded-full border border-hairline px-3 py-1 text-xs text-ink2 hover:border-brand hover:text-ink"
+                >
+                  Max
+                </button>
+              </div>
+            </>
+          )}
+
           <button
             onClick={() => setAdvanced(!advanced)}
             className="flex w-full items-center justify-between text-[11px] uppercase tracking-widest text-ink3 hover:text-ink2"
@@ -203,7 +255,8 @@ export function InvestPanel({
             <div className="space-y-2.5 rounded-lg border border-hairline bg-card2 p-3">
               <p className="text-[11px] leading-relaxed text-ink3">
                 Memecoins don&apos;t last forever — set the exit before the entry. Rules are
-                checked every minute against live prices and auto-redeem the whole position.
+                checked every minute against live prices and auto-sell the whole position
+                on-chain.
               </p>
               {(
                 [
@@ -219,7 +272,7 @@ export function InvestPanel({
                       key={v}
                       onClick={() => { setRulesDirty(true); row.set(row.value === v ? null : v); }}
                       className={cls(
-                        "flex-1 rounded-md border px-1 py-1 text-[11px] tabular-nums",
+                        "num flex-1 rounded-md border px-1 py-1 text-[11px]",
                         row.value === v
                           ? "border-brand bg-brand/15 text-ink"
                           : "border-hairline text-ink2 hover:border-brand/50"
@@ -241,27 +294,41 @@ export function InvestPanel({
               )}
             </div>
           )}
+
           <p className="text-[11px] leading-relaxed text-ink3">
-            10% fee on realised profit only — nothing on your principal, nothing on a loss. Fees
-            fund buyback &amp; burn.
+            Real Jupiter swaps from your wallet — tokens land in your wallet, weighted like this
+            basket. 10% fee on realised profit only; fees fund buyback &amp; burn.
           </p>
-          <button
-            disabled={!investValid || busy}
-            onClick={() => act(false)}
-            className="btn-brand w-full rounded-xl py-2.5 text-sm font-semibold"
-          >
-            {busy
-              ? "Placing order…"
-              : tpPct || slPct || closeDays
-                ? "Invest with exit rules"
-                : "Invest"}
-          </button>
+
+          {!confirming ? (
+            <button
+              disabled={!investValid || busy || needsDeposit}
+              onClick={() => setConfirming(true)}
+              className="btn-brand w-full rounded-xl py-2.5 text-sm"
+            >
+              {tpPct || slPct || closeDays ? "Invest with exit rules" : "Invest"}
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-center text-xs text-warn">
+                Real swap of {amountNum} SOL — irreversible once sent. Confirm?
+              </p>
+              <div className="flex gap-2">
+                <button disabled={busy} onClick={() => act(false)} className="btn-brand flex-1 rounded-xl py-2.5 text-sm">
+                  {busy ? "Swapping…" : "Confirm invest"}
+                </button>
+                <button disabled={busy} onClick={() => setConfirming(false)} className="btn-ghost flex-1 rounded-xl py-2.5 text-sm">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between text-xs text-ink3">
             <span>Your position</span>
-            <span className="tabular-nums">{fmtUsd(myValue)}</span>
+            <span className="num">{fmtUsd(myValue)}</span>
           </div>
           <input
             type="range"
@@ -275,7 +342,7 @@ export function InvestPanel({
           />
           <div className="flex items-center justify-between text-sm">
             <span className="text-ink3">Sell {Math.round(fraction * 100)}%</span>
-            <span className="tabular-nums text-ink2">≈ {fmtUsd(myValue * fraction)}</span>
+            <span className="num text-ink2">≈ {fmtUsd(myValue * fraction)}</span>
           </div>
           <div className="flex gap-2">
             {[0.25, 0.5, 1].map((f) => (
@@ -291,21 +358,35 @@ export function InvestPanel({
               </button>
             ))}
           </div>
-          <button
-            disabled={myValue <= 0 || busy}
-            onClick={() => act(false)}
-            className="w-full rounded-xl border border-hairline bg-card2 py-2.5 text-sm font-semibold text-ink hover:border-brand disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? "Selling…" : "Redeem to balance"}
-          </button>
+          {!confirming ? (
+            <button
+              disabled={myValue <= 0 || busy}
+              onClick={() => setConfirming(true)}
+              className="w-full rounded-xl border border-hairline bg-card2 py-2.5 text-sm font-semibold text-ink hover:border-brand disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Sell to SOL
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-center text-xs text-warn">
+                Real on-chain sell of {Math.round(fraction * 100)}% — irreversible. Confirm?
+              </p>
+              <div className="flex gap-2">
+                <button disabled={busy} onClick={() => act(false)} className="btn-brand flex-1 rounded-xl py-2.5 text-sm">
+                  {busy ? "Selling…" : "Confirm sell"}
+                </button>
+                <button disabled={busy} onClick={() => setConfirming(false)} className="btn-ghost flex-1 rounded-xl py-2.5 text-sm">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {writeOff && writeOff.length > 0 && (
             <div className="rounded-lg border border-warn/40 bg-warn/10 p-3 text-xs">
-              <p className="font-medium text-warn">
-                No live price for {writeOff.join(", ")}
-              </p>
+              <p className="font-medium text-warn">No route back to SOL for {writeOff.join(", ")}</p>
               <p className="mt-1 leading-relaxed text-ink2">
-                These may have rugged or stopped trading. You can redeem the rest and write those
-                legs off at $0 — or wait, in case the feed is just down.
+                These may have rugged or lost all liquidity. You can sell the rest and write those
+                legs off — or wait, in case liquidity returns.
               </p>
               <div className="mt-2 flex gap-2">
                 <button
@@ -313,7 +394,7 @@ export function InvestPanel({
                   disabled={busy}
                   className="flex-1 rounded-md border border-warn/50 px-2 py-1.5 font-medium text-warn hover:bg-warn/10"
                 >
-                  Write off &amp; redeem
+                  Write off &amp; sell rest
                 </button>
                 <button
                   onClick={() => setWriteOff(null)}
@@ -337,6 +418,21 @@ export function InvestPanel({
           )}
         >
           {msg.text}
+          {msg.sigs && msg.sigs.length > 0 && (
+            <span className="ml-1.5">
+              {msg.sigs.map((s, i) => (
+                <a
+                  key={s}
+                  href={`https://solscan.io/tx/${s}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mr-1.5 underline"
+                >
+                  tx{i + 1} ↗
+                </a>
+              ))}
+            </span>
+          )}
         </div>
       )}
     </div>

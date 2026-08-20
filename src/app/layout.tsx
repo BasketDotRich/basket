@@ -66,9 +66,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <p>
               Every account gets its own Solana wallet — deposit, trade baskets, withdraw any
               time. Market data: Jupiter, DexScreener, CoinGecko. Wallet tracking is on-chain;
-              trader wallets are publicly attributed via Kolscan. The practice balance is a
-              separate sandbox for testing strategies. Memecoins are extremely volatile and most
-              go to zero — nothing here is investment advice.</p>
+              trader wallets are publicly attributed via Kolscan. Every trade is a real
+              on-chain swap — there is no simulated money anywhere on this site. Memecoins are
+              extremely volatile and most go to zero — nothing here is investment advice.</p>
           </div>
         </footer>
       </body>

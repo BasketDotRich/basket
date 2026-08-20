@@ -1,26 +1,23 @@
-// Protocol treasury & buyback-burn accounting.
+// Protocol treasury & buyback-burn accounting. REAL MONEY ONLY.
 //
-// Three revenue streams, all recorded in treasury_ledger:
+// Two revenue streams, all recorded in treasury_ledger:
 //   1. PERFORMANCE FEE — 10% of REALISED PROFIT on every redeem. Charged on
-//      gains only: never on principal, never on a loss.
-//   2. CREATION FEE — 0.5 SOL per basket created, in SOL terms, converted at
-//      the live SOL price for the USD ledger.
-//   3. TREASURY PnL — profit the treasury itself earns from deploying stream 1
-//      and 2 into baskets. That profit is what gets burned.
+//      gains only: never on principal, never on a loss. Collected as a real
+//      SOL transfer from the account wallet to TREASURY_WALLET at redeem time
+//      (accrued on the ledger either way, so nothing is ever lost).
+//   2. CREATION FEE — 0.5 SOL per basket created, a real on-chain SOL
+//      transfer from the creator's account wallet to TREASURY_WALLET.
 //
-// Streams 1+2 fund the treasury; the treasury deploys them into baskets; the
-// PROFIT from those positions is queued for buyback-and-burn of the platform
-// token. Pre-launch there is no platform token and no on-chain execution, so
-// this is a faithful ACCRUAL ledger — every number here is what the burn
-// engine will execute against at launch. Nothing is presented as an on-chain
-// burn that has not happened.
+// Everything routes to buyback-and-burn of the platform token. Pre-token the
+// ledger is a faithful ACCRUAL record — every number is what the burn engine
+// executes against at launch. Nothing is presented as a burn that hasn't
+// happened on-chain.
 import { getDb } from "./db";
 import { getPrices } from "./prices";
 import { SOL_MINT } from "./wallets";
 
 export const PERFORMANCE_FEE_BPS = 1000; // 10% of realised profit
 export const CREATION_FEE_SOL = 0.5;
-export const BURN_SHARE_OF_TREASURY_PNL = 1; // 100% of treasury PnL is burned
 
 export type LedgerKind = "performance_fee" | "creation_fee" | "treasury_pnl" | "deploy" | "burn";
 
@@ -35,12 +32,9 @@ export type LedgerRow = {
   detail: string;
 };
 
-/** The system user doubles as the treasury account holder. */
-export function treasuryUserId(): number {
-  const row = getDb()
-    .prepare("SELECT id FROM users WHERE email = 'system@basket.rich'")
-    .get() as { id: number } | undefined;
-  return row?.id ?? 1;
+export function treasuryWallet(): string | null {
+  const w = process.env.TREASURY_WALLET?.trim();
+  return w && w.length >= 32 ? w : null;
 }
 
 export function recordLedger(entry: {
@@ -74,9 +68,11 @@ export async function solPriceUsd(): Promise<number | null> {
 }
 
 /**
- * Performance fee on a realised gain. Returns the fee (0 when the redeem was
- * flat or a loss). Must be called INSIDE the redeem transaction so the fee and
- * the payout can never diverge.
+ * Record the performance fee on a realised gain. Returns the fee in USD
+ * (0 when the redeem was flat or a loss). The CALLER settles it — by keeping
+ * that slice of the redeem's SOL proceeds and forwarding it on-chain to the
+ * treasury wallet. This function only writes the accrual ledger row, so fee
+ * and payout can never diverge from what was recorded.
  */
 export function takePerformanceFee(args: {
   userId: number;
@@ -84,95 +80,109 @@ export function takePerformanceFee(args: {
   basketName: string;
   proceeds: number;
   costRedeemed: number;
+  settledSol?: number | null;
+  settledSig?: string | null;
 }): number {
   const profit = args.proceeds - args.costRedeemed;
   if (!(profit > 0)) return 0;
-  // The treasury never charges itself a fee — its whole realised profit is the
-  // burn, which is the point of deploying fee revenue into baskets.
-  if (args.userId === treasuryUserId()) {
-    queueBurnFromTreasuryPnl(
-      profit,
-      `Treasury profit on ${args.basketName} → buyback & burn`
-    );
-    return 0;
-  }
   const fee = (profit * PERFORMANCE_FEE_BPS) / 10_000;
   if (!(fee > 0)) return 0;
-  const db = getDb();
-  // credit the treasury account so the fee can be deployed like any capital
-  db.prepare("UPDATE users SET cash = cash + ? WHERE id = ?").run(fee, treasuryUserId());
-  db.prepare(
-    "INSERT INTO treasury_ledger (ts, kind, amount_usd, amount_sol, user_id, basket_id, detail) VALUES (?, 'performance_fee', ?, NULL, ?, ?, ?)"
-  ).run(
-    Date.now(),
-    fee,
-    args.userId,
-    args.basketId,
-    `10% of $${profit.toFixed(2)} profit on ${args.basketName}`
-  );
+  getDb()
+    .prepare(
+      "INSERT INTO treasury_ledger (ts, kind, amount_usd, amount_sol, user_id, basket_id, detail) VALUES (?, 'performance_fee', ?, ?, ?, ?, ?)"
+    )
+    .run(
+      Date.now(),
+      fee,
+      args.settledSol ?? null,
+      args.userId,
+      args.basketId,
+      `10% of $${profit.toFixed(2)} profit on ${args.basketName}` +
+        (args.settledSig
+          ? ` · on-chain ${args.settledSig}`
+          : " · accrued (treasury wallet not configured)")
+    );
   return fee;
 }
 
 export class TreasuryError extends Error {}
 
 /**
- * Charge the 0.5 SOL basket-creation fee. Denominated in SOL, settled from the
- * creator's balance at the live SOL price. 100% routes to buyback-and-burn.
- * Throws if the price feed is down (never guess a rate the user pays).
+ * Charge the 0.5 SOL basket-creation fee as a REAL on-chain transfer from the
+ * creator's account wallet to the treasury wallet. When TREASURY_WALLET isn't
+ * configured yet the fee is waived — recorded on the ledger as such, never
+ * silently — because there is nowhere real to send it.
  */
-export async function chargeCreationFee(userId: number, basketName: string): Promise<{
-  sol: number;
-  usd: number;
-}> {
+export async function chargeCreationFee(
+  userId: number,
+  basketName: string
+): Promise<{ sol: number; usd: number; signature: string | null; waived: boolean }> {
   const price = await solPriceUsd();
   if (price == null) {
     throw new TreasuryError("SOL price unavailable — can't price the creation fee right now");
   }
   const usd = CREATION_FEE_SOL * price;
-  const db = getDb();
-  const r = db
-    .prepare("UPDATE users SET cash = cash - ? WHERE id = ? AND cash >= ? - 1e-9")
-    .run(usd, userId, usd);
-  if (r.changes === 0) {
+  const dest = treasuryWallet();
+
+  if (!dest) {
+    recordLedger({
+      kind: "creation_fee",
+      amountUsd: 0,
+      amountSol: 0,
+      userId,
+      detail: `Fee waived for "${basketName}" — TREASURY_WALLET not configured`,
+    });
+    return { sol: 0, usd: 0, signature: null, waived: true };
+  }
+
+  const { getAccountWallet, getSolBalance, signAndSendForAccount, LAMPORTS_PER_SOL, WITHDRAW_RESERVE_LAMPORTS } =
+    await import("./accounts");
+  const wallet = getAccountWallet(userId);
+  if (!wallet) throw new TreasuryError("This account has no wallet yet");
+  const lamports = Math.floor(CREATION_FEE_SOL * LAMPORTS_PER_SOL);
+  const balance = await getSolBalance(wallet.address);
+  if (lamports + WITHDRAW_RESERVE_LAMPORTS > balance) {
     throw new TreasuryError(
-      `Creating a basket costs ${CREATION_FEE_SOL} SOL (≈$${usd.toFixed(2)}) — add funds first`
+      `Creating a basket costs ${CREATION_FEE_SOL} SOL (≈$${usd.toFixed(2)}) — deposit SOL to your wallet first`
     );
   }
-  db.prepare("UPDATE users SET cash = cash + ? WHERE id = ?").run(usd, treasuryUserId());
+  const { buildSolTransfer } = await import("./swap");
+  const tx = await buildSolTransfer(wallet.address, dest, lamports);
+  const [signature] = await signAndSendForAccount(userId, [tx]);
+
+  const db = getDb();
   db.prepare(
     "INSERT INTO treasury_ledger (ts, kind, amount_usd, amount_sol, user_id, basket_id, detail) VALUES (?, 'creation_fee', ?, ?, ?, NULL, ?)"
-  ).run(Date.now(), usd, CREATION_FEE_SOL, userId, `${CREATION_FEE_SOL} SOL to create "${basketName}"`);
+  ).run(
+    Date.now(),
+    usd,
+    CREATION_FEE_SOL,
+    userId,
+    `${CREATION_FEE_SOL} SOL to create "${basketName}" · ${signature}`
+  );
   db.prepare(
-    "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'withdraw', NULL, ?, ?, ?)"
-  ).run(userId, usd, `Basket creation fee — ${CREATION_FEE_SOL} SOL → buyback & burn`, Date.now());
-  return { sol: CREATION_FEE_SOL, usd };
-}
-
-/**
- * Book treasury trading profit into the burn queue. Called when the treasury
- * realises a gain on capital it deployed — that profit is what buys back and
- * burns the platform token.
- */
-export function queueBurnFromTreasuryPnl(profitUsd: number, detail: string): void {
-  if (!(profitUsd > 0)) return;
-  const amount = profitUsd * BURN_SHARE_OF_TREASURY_PNL;
-  recordLedger({ kind: "treasury_pnl", amountUsd: amount, detail });
+    "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'fee', NULL, ?, ?, ?)"
+  ).run(
+    userId,
+    usd,
+    `Basket creation fee — ${CREATION_FEE_SOL} SOL → buyback & burn · ${signature}`,
+    Date.now()
+  );
+  return { sol: CREATION_FEE_SOL, usd, signature, waived: false };
 }
 
 export type TreasuryStats = {
   performanceFees: number;
   creationFees: number;
   creationFeesSol: number;
-  treasuryPnl: number;
+  collectedSol: number;
   burned: number;
   pendingBurn: number;
-  treasuryCash: number;
-  deployedValue: number;
   totalInflow: number;
   basketsCreated: number;
 };
 
-/** Roll up the ledger plus the treasury's live deployed positions. */
+/** Roll up the ledger — pure accrual, every row backed by a real event. */
 export async function getTreasuryStats(): Promise<TreasuryStats> {
   const db = getDb();
   const sum = (kind: LedgerKind, col: "amount_usd" | "amount_sol" = "amount_usd") =>
@@ -185,23 +195,8 @@ export async function getTreasuryStats(): Promise<TreasuryStats> {
   const performanceFees = sum("performance_fee");
   const creationFees = sum("creation_fee");
   const creationFeesSol = sum("creation_fee", "amount_sol");
-  const treasuryPnl = sum("treasury_pnl");
+  const performanceFeesSol = sum("performance_fee", "amount_sol");
   const burned = Math.abs(sum("burn"));
-
-  const tid = treasuryUserId();
-  const treasuryCash = (
-    db.prepare("SELECT cash FROM users WHERE id = ?").get(tid) as { cash: number } | undefined
-  )?.cash ?? 0;
-
-  // live value of whatever the treasury has deployed into baskets
-  const { getPortfolio } = await import("./portfolio");
-  let deployedValue = 0;
-  try {
-    const pf = await getPortfolio(tid);
-    deployedValue = pf.totalValue - pf.cash;
-  } catch {
-    deployedValue = 0;
-  }
 
   const basketsCreated = (
     db.prepare("SELECT COUNT(*) AS n FROM treasury_ledger WHERE kind = 'creation_fee'").get() as {
@@ -209,71 +204,17 @@ export async function getTreasuryStats(): Promise<TreasuryStats> {
     }
   ).n;
 
+  const totalInflow = performanceFees + creationFees;
   return {
     performanceFees,
     creationFees,
     creationFeesSol,
-    treasuryPnl,
+    collectedSol: creationFeesSol + performanceFeesSol,
     burned,
-    pendingBurn: Math.max(0, treasuryPnl - burned),
-    treasuryCash,
-    deployedValue,
-    totalInflow: performanceFees + creationFees,
+    pendingBurn: Math.max(0, totalInflow - burned),
+    totalInflow,
     basketsCreated,
   };
-}
-
-const DEPLOY_FLOOR_USD = 100; // keep a working reserve; deploy above this
-const DEPLOY_MAX_BASKETS = 3;
-
-/**
- * Put accrued fee revenue to work: the treasury invests its cash into the most
- * subscribed public baskets. Profit realised on these positions is queued for
- * buyback-and-burn (see takePerformanceFee). Runs on the same tick as the exit
- * rules engine; no-ops when there's nothing meaningful to deploy.
- */
-export async function deployTreasury(): Promise<number> {
-  const db = getDb();
-  const tid = treasuryUserId();
-  const cash = (
-    db.prepare("SELECT cash FROM users WHERE id = ?").get(tid) as { cash: number } | undefined
-  )?.cash ?? 0;
-  const deployable = cash - DEPLOY_FLOOR_USD;
-  if (deployable < 50) return 0;
-
-  const targets = db
-    .prepare(
-      `SELECT b.id, b.name,
-              (SELECT COUNT(DISTINCT user_id) FROM holdings h WHERE h.basket_id = b.id AND h.qty > 0) +
-              (SELECT COUNT(*) FROM trader_holdings th WHERE th.basket_id = b.id AND th.units > 0) AS investors
-       FROM baskets b
-       WHERE b.is_public = 1 AND b.kind = 'coin' AND b.owner_id != ?
-       ORDER BY investors DESC, b.id ASC
-       LIMIT ?`
-    )
-    .all(tid, DEPLOY_MAX_BASKETS) as { id: number; name: string; investors: number }[];
-  if (targets.length === 0) return 0;
-
-  const per = Math.floor((deployable / targets.length) * 100) / 100;
-  if (per < 1) return 0;
-
-  const { investInBasket } = await import("./portfolio");
-  let deployed = 0;
-  for (const t of targets) {
-    try {
-      await investInBasket(tid, t.id, per);
-      deployed += per;
-      recordLedger({
-        kind: "deploy",
-        amountUsd: 0,
-        basketId: t.id,
-        detail: `Deployed $${per.toFixed(2)} of fee revenue into ${t.name}`,
-      });
-    } catch {
-      // price feed down or basket unusable — try again next tick
-    }
-  }
-  return deployed;
 }
 
 export function getLedger(limit = 50): LedgerRow[] {

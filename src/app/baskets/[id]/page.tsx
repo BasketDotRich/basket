@@ -9,7 +9,6 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { LineChart } from "@/components/LineChart";
 import { Donut } from "@/components/Donut";
 import { InvestPanel } from "@/components/InvestPanel";
-import { OnchainPanel } from "@/components/OnchainPanel";
 
 type TokenRow = {
   mint: string;
@@ -67,7 +66,7 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
   const router = useRouter();
   const [basket, setBasket] = useState<BasketDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [me, setMe] = useState<{ id: number; cash: number } | null>(null);
+  const [me, setMe] = useState<{ id: number } | null>(null);
   const [days, setDays] = useState(30);
   const [chart, setChart] = useState<{
     points: [number, number][];
@@ -367,15 +366,24 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
               </p>
             </div>
           )}
-          <InvestPanel
-            basketId={basket.id}
-            signedIn={me != null}
-            cash={me?.cash ?? 0}
-            myValue={basket.myValue}
-            rule={basket.myRule ?? null}
-            onDone={load}
-          />
-          {basket.kind === "coin" && <OnchainPanel basketId={basket.id} signedIn={me != null} />}
+          {basket.kind === "coin" ? (
+            <InvestPanel
+              basketId={basket.id}
+              signedIn={me != null}
+              myValue={basket.myValue}
+              rule={basket.myRule ?? null}
+              onDone={load}
+            />
+          ) : (
+            <div className="card p-5 text-[13px] leading-relaxed text-ink2">
+              <span className="chip chip-gold mb-2">TRACKING ONLY</span>
+              <p className="mt-2">
+                Trader baskets track their wallets&apos; real on-chain performance. Copy-trade
+                execution — mirroring their entries with your SOL — is coming; nothing is
+                investable here yet, and nothing here is simulated.
+              </p>
+            </div>
+          )}
           {basket.mine && basket.investors === 0 && (
             <>
               <button
@@ -409,9 +417,9 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
           )}
           <div className="card p-5 text-xs leading-relaxed text-ink3">
             {basket.kind === "coin" ? (
-              <>Investing splits your balance across every token at its live Jupiter price. Redeeming sells back to balance at current prices.</>
+              <>Investing executes real Jupiter swaps from your account wallet into every token, weighted like the basket. Redeeming swaps the position back to SOL in your wallet.</>
             ) : (
-              <>Investing buys units of this basket&apos;s NAV, which tracks the real on-chain value of the member wallets (SOL, stables and tracked tokens). Execution-level copy-trading ships with the live-money launch.</>
+              <>This basket&apos;s NAV tracks the real on-chain value of the member wallets (SOL, stables and tracked tokens) — live attribution, no simulation.</>
             )}
           </div>
         </div>
