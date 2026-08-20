@@ -11,7 +11,8 @@ declare global {
 const SYSTEM_EMAIL = "system@basket.rich";
 
 function createDb(): DatabaseSync {
-  const dataDir = path.join(process.cwd(), "data");
+  // DATA_DIR lets production mount a persistent volume (e.g. /data on Railway)
+  const dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new DatabaseSync(path.join(dataDir, "basket.db"));
   db.exec("PRAGMA journal_mode = WAL;");
