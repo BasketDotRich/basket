@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+    
+    <g fill="none">
+      <!-- handle: thick arc -->
+      <path d="M 200 76
+               C 151 76 112 116 112 165
+               L 112 178
+               L 152 178
+               L 152 165
+               C 152 138 173 116 200 116
+               C 227 116 248 138 248 165
+               L 248 178
+               L 288 178
+               L 288 165
+               C 288 116 249 76 200 76 Z"/>
+      <!-- rim -->
+      <rect x="74" y="182" width="252" height="46" rx="23"/>
+      <!-- body: strong taper, flat base -->
+      <path d="M 96 244 L 304 244 L 272 336 C 268 348 258 354 246 354 L 154 354 C 142 354 132 348 128 336 Z"/>
+    </g>
+    <!-- weave knocked back out of the body in the disc colour -->
+    <g fill="none">
+      <path d="M 158 250 L 176 250 L 172 348 L 154 348 Z"/>
+      <path d="M 224 250 L 242 250 L 246 348 L 228 348 Z"/>
+      <rect x="104" y="282" width="192" height="15" rx="7"/>
+    </g>
+  
+  </svg>

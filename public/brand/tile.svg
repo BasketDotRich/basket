@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+    <rect width="400" height="400" rx="88" fill="#0a0c10"/>
+    <g transform="translate(200 165) scale(1) translate(-200 -200)">
+      
+    <!-- handle -->
+    <path d="M 152 196 A 48 52 0 0 1 248 196"
+          fill="none" stroke="#6aa9f2" stroke-width="19" stroke-linecap="round"/>
+    <!-- rim -->
+    <rect x="104" y="192" width="192" height="34" rx="15" fill="#6aa9f2"/>
+    <!-- tapered body with a rounded base -->
+    <path d="M 122 234 L 278 234 L 258 312 Q 254 326 240 326 L 160 326 Q 146 326 142 312 Z"
+          fill="#3987e5"/>
+    <!-- weave: three tapered slats + one band, cut in the background colour -->
+    <g fill="#0a0c10">
+      <path d="M 153.5 234 L 166.5 234 L 175.1 326 L 165.4 326 Z"/><path d="M 193.5 234 L 206.5 234 L 204.8 326 L 195.2 326 Z"/><path d="M 233.5 234 L 246.5 234 L 234.6 326 L 224.9 326 Z"/>
+      <rect x="126" y="266" width="148" height="12" rx="4"/>
+    </g>
+  
+    </g>
+  </svg>
