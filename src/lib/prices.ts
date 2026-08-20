@@ -349,7 +349,10 @@ const MARKETS_TTL = 15 * 60_000;
 export async function getMarketsOverview(cgIds: string[]): Promise<Record<string, MarketOverview>> {
   // Cache PER id-set — a single global entry would let a one-token call from a
   // token page overwrite (and then serve) the whole markets table.
-  const cacheMap = (globalThis.__mbMarketsCache ??= new Map());
+  // (instanceof guard: a hot-reloaded process may still hold the old
+  // pre-Map shape of this global)
+  let cacheMap = globalThis.__mbMarketsCache;
+  if (!(cacheMap instanceof Map)) cacheMap = globalThis.__mbMarketsCache = new Map();
   const cacheKey = [...cgIds].sort().join(",");
   const cached = cacheMap.get(cacheKey);
   const now = Date.now();
