@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/dashboard", label: "Portfolio" },
   { href: "/wallet", label: "Wallet" },
   { href: "/treasury", label: "Treasury" },
+  { href: "/docs", label: "Docs" },
 ];
 
 export async function Nav() {

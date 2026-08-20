@@ -57,6 +57,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <span className="text-ink3">·</span>
               <span>basket.rich</span>
               <span className="text-ink3">·</span>
+              <a href="/docs" className="hover:text-ink2">docs</a>
+              <span className="text-ink3">·</span>
               <a href="/tokenomics" className="hover:text-ink2">tokenomics</a>
               <span className="text-ink3">·</span>
               <a href="https://github.com/BasketDotRich" target="_blank" rel="noreferrer" className="hover:text-ink2">
