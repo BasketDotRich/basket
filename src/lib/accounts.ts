@@ -107,31 +107,46 @@ export async function withdrawSol(
 }
 
 /**
- * Sign and send pre-built Jupiter swap transactions with the account wallet.
- * Returns the confirmed signatures.
+ * Sign, send AND CONFIRM one transaction with the account wallet.
+ *
+ * Confirmation is mandatory: an RPC that accepts a transaction is not a
+ * transaction that landed. Callers record ledger rows only for signatures this
+ * function returned, so a dropped or failed swap can never become a phantom
+ * holding. Throws if the transaction did not confirm.
  */
-export async function signAndSendForAccount(
-  userId: number,
-  base64Txs: string[]
-): Promise<string[]> {
+export async function signSendConfirmOne(userId: number, base64Tx: string): Promise<string> {
   const wallet = getAccountWallet(userId);
   if (!wallet) throw new CustodyError("This account has no wallet yet");
   const { Connection, VersionedTransaction } = await import("@solana/web3.js");
   const conn = new Connection(rpcUrl(), "confirmed");
   const signer = loadSigner(wallet.encryptedKey);
 
+  const tx = VersionedTransaction.deserialize(Buffer.from(base64Tx, "base64"));
+  tx.sign([signer]);
+  const latest = await conn.getLatestBlockhash("confirmed");
+  const signature = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
+  const res = await conn.confirmTransaction(
+    { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+    "confirmed"
+  );
+  if (res.value.err) {
+    throw new CustodyError(`Transaction failed on-chain (${signature})`);
+  }
+  return signature;
+}
+
+/**
+ * Sign and send several transactions, confirming each before moving on.
+ * Stops at the first failure and reports what actually landed, so the caller
+ * can persist exactly the legs that executed.
+ */
+export async function signAndSendForAccount(
+  userId: number,
+  base64Txs: string[]
+): Promise<string[]> {
   const signatures: string[] = [];
   for (const b64 of base64Txs) {
-    const tx = VersionedTransaction.deserialize(Buffer.from(b64, "base64"));
-    tx.sign([signer]);
-    const sig = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
-    signatures.push(sig);
-  }
-  if (signatures.length > 0) {
-    const latest = await conn.getLatestBlockhash("confirmed");
-    await conn
-      .confirmTransaction({ signature: signatures[signatures.length - 1], ...latest }, "confirmed")
-      .catch(() => undefined);
+    signatures.push(await signSendConfirmOne(userId, b64));
   }
   return signatures;
 }

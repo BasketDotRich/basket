@@ -164,7 +164,7 @@ export async function investInBasket(
   const tokens = getBasketTokens(basketId);
   if (tokens.length === 0) throw new InvestError("Basket has no tokens");
 
-  const { getAccountWallet, getSolBalance, signAndSendForAccount, WITHDRAW_RESERVE_LAMPORTS } =
+  const { getAccountWallet, getSolBalance, signSendConfirmOne, WITHDRAW_RESERVE_LAMPORTS } =
     await import("./accounts");
   const wallet = getAccountWallet(userId);
   if (!wallet) throw new InvestError("This account has no wallet yet");
@@ -186,40 +186,83 @@ export async function investInBasket(
     lamports,
     100
   );
-  const txs = await buildSwapTransactions(legs, wallet.address);
-  const signatures = await signAndSendForAccount(userId, txs);
-
-  // Ledger AFTER execution: record what the swaps actually bought (quote
-  // outAmount, decimals-adjusted) with a USD cost basis at the live SOL price.
   const sol = (await solPriceUsd()) ?? 0;
   const decimalsOf = new Map(tokens.map((t) => [t.mint, t.decimals]));
-  db.exec("BEGIN");
-  try {
-    for (let i = 0; i < legs.length; i++) {
-      const leg = legs[i];
+  const signatures: string[] = [];
+  let spentSol = 0;
+  let failure: unknown = null;
+
+  // Execute ONE LEG AT A TIME and persist each leg the moment its swap is
+  // CONFIRMED on-chain. Never batch-then-record: if leg 3 of 5 fails, legs 1-2
+  // are already real on-chain, so they must already be real in the ledger —
+  // otherwise a retry double-buys them and the tokens look like they came from
+  // nowhere. Equally, nothing is recorded for a swap that didn't confirm.
+  for (const leg of legs) {
+    try {
+      const [tx] = await buildSwapTransactions([leg], wallet.address);
+      const sig = await signSendConfirmOne(userId, tx);
+      signatures.push(sig);
+      const legSol = leg.lamportsIn / LAMPORTS_PER_SOL;
+      spentSol += legSol;
       const qty = Number(leg.outAmount) / 10 ** (decimalsOf.get(leg.mint) ?? 6);
-      const usd = (leg.lamportsIn / LAMPORTS_PER_SOL) * sol;
-      db.prepare(
-        `INSERT INTO holdings (user_id, basket_id, mint, qty, cost) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, basket_id, mint) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost`
-      ).run(userId, basketId, leg.mint, qty, usd);
+      db.exec("BEGIN");
+      try {
+        db.prepare(
+          `INSERT INTO holdings (user_id, basket_id, mint, qty, cost) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, basket_id, mint) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost`
+        ).run(userId, basketId, leg.mint, qty, legSol * sol);
+        db.prepare(
+          "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'invest', ?, ?, ?, ?)"
+        ).run(
+          userId,
+          basketId,
+          legSol * sol,
+          `Bought ${leg.symbol} for ${basket.name} — ${legSol.toFixed(4)} SOL · ${sig}`,
+          Date.now()
+        );
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+    } catch (e) {
+      failure = e; // stop here — the remaining legs were never sent
+      break;
     }
-    db.prepare(
-      "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'invest', ?, ?, ?, ?)"
-    ).run(
-      userId,
-      basketId,
-      amountSol * sol,
-      `Invested ${amountSol} SOL in ${basket.name} · ${signatures.join(" ")}`,
-      Date.now()
-    );
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
   }
+
   await recordSnapshot(userId, true);
+
+  if (failure && signatures.length === 0) {
+    throw failure instanceof Error ? failure : new InvestError("The swap failed");
+  }
+  if (failure) {
+    throw new PartialInvestError(
+      signatures.length,
+      legs.length,
+      spentSol,
+      failure instanceof Error ? failure.message : "a leg failed"
+    );
+  }
   return { signatures };
+}
+
+/**
+ * Some legs bought and were recorded, then a later leg failed. The position
+ * exists and is accurate — just smaller than requested. Surfaced explicitly so
+ * the user can reconcile the app against their wallet instead of guessing.
+ */
+export class PartialInvestError extends InvestError {
+  constructor(
+    public filled: number,
+    public total: number,
+    public spentSol: number,
+    reason: string
+  ) {
+    super(
+      `Bought ${filled} of ${total} legs — ${spentSol.toFixed(4)} SOL spent and recorded — then stopped: ${reason}. Your position reflects exactly what executed.`
+    );
+  }
 }
 
 /**
@@ -264,7 +307,7 @@ export async function redeemFromBasket(
     throw new InvestError("Nothing to redeem in this basket");
   }
 
-  const { getAccountWallet, signAndSendForAccount } = await import("./accounts");
+  const { getAccountWallet, signSendConfirmOne } = await import("./accounts");
   const wallet = getAccountWallet(userId);
   if (!wallet) throw new InvestError("This account has no wallet yet");
 
@@ -282,7 +325,8 @@ export async function redeemFromBasket(
   });
 
   const { quoteExitLegs, buildSwapTransactions } = await import("./swap");
-  const { solPriceUsd, takePerformanceFee: takeFee, treasuryWallet } = await import("./treasury");
+  const { solPriceUsd, takePerformanceFee: takeFee, treasuryWallet, PERFORMANCE_FEE_BPS } =
+    await import("./treasury");
   const sellable = toSell.filter((s) => s.rawAmount > BigInt(0));
   const quoted = await quoteExitLegs(
     sellable.map((s) => ({ mint: s.mint, symbol: s.symbol, rawAmount: s.rawAmount.toString() })),
@@ -295,33 +339,89 @@ export async function redeemFromBasket(
     throw new UnpricedLegsError(unrouteable.map((s) => s.symbol));
   }
 
-  let signatures: string[] = [];
+  const sol = (await solPriceUsd()) ?? 0;
+  const quotedByMint = new Map(quoted.map((q) => [q.mint, q]));
+  const signatures: string[] = [];
   let proceedsSol = 0;
-  if (quoted.length > 0) {
-    const txs = await buildSwapTransactions(quoted, wallet.address);
-    signatures = await signAndSendForAccount(userId, txs);
-    proceedsSol = quoted.reduce((s, q) => s + Number(q.outAmount) / LAMPORTS_PER_SOL, 0);
+  let costRedeemed = 0;
+  let sellFailure: unknown = null;
+
+  // Sell ONE LEG AT A TIME, confirming each, and retire that leg from the
+  // ledger immediately. A later leg failing can then never un-record a sale
+  // that already happened, nor leave a sold leg still showing as held.
+  for (const r of rows) {
+    const q = quotedByMint.get(r.mint);
+    const legCost = r.cost * fraction;
+    let legSol = 0;
+    let sig: string | null = null;
+
+    if (q) {
+      try {
+        const [tx] = await buildSwapTransactions([q], wallet.address);
+        sig = await signSendConfirmOne(userId, tx);
+        legSol = Number(q.outAmount) / LAMPORTS_PER_SOL;
+      } catch (e) {
+        sellFailure = e;
+        break; // leave this leg (and the rest) untouched in the ledger
+      }
+    }
+    // No quote for this leg means it is unrouteable and the caller already
+    // consented to writing it off at zero (checked above).
+
+    proceedsSol += legSol;
+    costRedeemed += legCost;
+    if (sig) signatures.push(sig);
+
+    db.exec("BEGIN");
+    try {
+      if (fraction >= 0.9999) {
+        db.prepare("DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?").run(
+          userId, basketId, r.mint
+        );
+      } else {
+        db.prepare(
+          "UPDATE holdings SET qty = qty * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ? AND mint = ?"
+        ).run(1 - fraction, 1 - fraction, userId, basketId, r.mint);
+      }
+      db.prepare(
+        "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'redeem', ?, ?, ?, ?)"
+      ).run(
+        userId, basketId, legSol * sol,
+        sig
+          ? `Sold ${r.symbol} from ${basket.name} — ${legSol.toFixed(4)} SOL · ${sig}`
+          : `Wrote off ${r.symbol} from ${basket.name} — no route back to SOL`,
+        Date.now()
+      );
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      sellFailure = e;
+      break;
+    }
   }
 
-  const sol = (await solPriceUsd()) ?? 0;
-  const proceeds = proceedsSol * sol;
-  const costRedeemed = rows.reduce((s, r) => s + r.cost * fraction, 0);
+  const soldEverything = !sellFailure;
+  if (soldEverything && fraction >= 0.9999) {
+    // exit rules belong to the position, not the basket — retire them with it
+    db.prepare("DELETE FROM position_rules WHERE user_id = ? AND basket_id = ?").run(userId, basketId);
+  }
 
-  // Performance fee: 10% of realised profit, settled as a REAL SOL transfer to
-  // the treasury wallet (accrued on the ledger regardless, so nothing is lost
-  // if the transfer or config is unavailable).
+  const proceeds = proceedsSol * sol;
+
+  // Performance fee LAST: 10% of realised profit, only on what actually sold
+  // and only after those sales are committed. Settled as a real SOL transfer
+  // when the treasury wallet is configured; accrued on the ledger either way.
   let fee = 0;
   let feeSig: string | null = null;
   const profit = proceeds - costRedeemed;
   const dest = treasuryWallet();
   if (profit > 0 && sol > 0) {
-    const feeUsd = (profit * 1000) / 10_000;
-    const feeSol = feeUsd / sol;
+    const feeSol = (profit * (PERFORMANCE_FEE_BPS / 10_000)) / sol;
     if (dest && feeSol >= 0.0005) {
       try {
         const { buildSolTransfer } = await import("./swap");
         const tx = await buildSolTransfer(wallet.address, dest, Math.floor(feeSol * LAMPORTS_PER_SOL));
-        [feeSig] = await signAndSendForAccount(userId, [tx]);
+        feeSig = await signSendConfirmOne(userId, tx);
       } catch {
         feeSig = null; // accrued below either way
       }
@@ -333,38 +433,30 @@ export async function redeemFromBasket(
   }
   const net = proceeds - (feeSig ? fee : 0);
 
-  db.exec("BEGIN");
-  try {
-    for (const r of rows) {
-      if (fraction >= 0.9999) {
-        db.prepare("DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?").run(
-          userId, basketId, r.mint
-        );
-      } else {
-        db.prepare(
-          "UPDATE holdings SET qty = qty * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ? AND mint = ?"
-        ).run(1 - fraction, 1 - fraction, userId, basketId, r.mint);
-      }
-    }
-    if (fraction >= 0.9999) {
-      // exit rules belong to the position, not the basket — retire them with it
-      db.prepare("DELETE FROM position_rules WHERE user_id = ? AND basket_id = ?").run(userId, basketId);
-    }
+  if (note || fee > 0) {
+    // summary row for the auto-exit reason and/or the fee
     db.prepare(
-      "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'redeem', ?, ?, ?, ?)"
+      "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'redeem', ?, 0, ?, ?)"
     ).run(
-      userId, basketId, net,
+      userId, basketId,
       (note ?? `Redeemed ${(fraction * 100).toFixed(0)}% of ${basket.name}`) +
-        ` · ${proceedsSol.toFixed(4)} SOL to wallet` +
-        (fee > 0 ? ` · $${fee.toFixed(2)} performance fee → buyback & burn` : "") +
-        (signatures.length ? ` · ${signatures.join(" ")}` : ""),
+        ` · ${proceedsSol.toFixed(4)} SOL total` +
+        (fee > 0
+          ? ` · $${fee.toFixed(2)} performance fee ${feeSig ? "sent" : "accrued"} → buyback & burn`
+          : ""),
       Date.now()
     );
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
   }
+
+  if (sellFailure) {
+    await recordSnapshot(userId, true);
+    throw new InvestError(
+      `Sold ${signatures.length} of ${rows.length} legs (${proceedsSol.toFixed(4)} SOL, recorded) before failing: ${
+        sellFailure instanceof Error ? sellFailure.message : "a leg failed"
+      }. The rest of the position is untouched — try again.`
+    );
+  }
+
   await recordSnapshot(userId, true);
   return net;
 }
@@ -443,7 +535,10 @@ function positionExists(userId: number, basketId: number): boolean {
   return !!trader;
 }
 
-async function positionValueAndCost(userId: number, basketId: number): Promise<{ value: number; cost: number } | null> {
+async function positionValueAndCost(
+  userId: number,
+  basketId: number
+): Promise<{ value: number; cost: number; hasDeadLeg: boolean } | null> {
   const db = getDb();
   const basket = getBasket(basketId);
   if (!basket) return null;
@@ -455,13 +550,22 @@ async function positionValueAndCost(userId: number, basketId: number): Promise<{
     const prices = await getPrices(rows.map((r) => r.mint), { maxStaleMs: PRICE_MAX_STALE_MS });
     let value = 0;
     let cost = 0;
+    let priced = 0;
+    let unpriced = 0;
     for (const r of rows) {
       const p = prices[r.mint]?.usdPrice;
-      if (!p || p <= 0) return null; // can't judge the rule without live prices
-      value += r.qty * p;
       cost += r.cost;
+      if (!p || p <= 0) {
+        unpriced++; // a specific token died: contributes 0 to value
+        continue;
+      }
+      priced++;
+      value += r.qty * p;
     }
-    return { value, cost };
+    // Every leg unpriced means the FEED is down, not that the basket is
+    // worthless — bail out rather than firing a stop-loss on an outage.
+    if (priced === 0) return null;
+    return { value, cost, hasDeadLeg: unpriced > 0 };
   }
   const row = db
     .prepare("SELECT units, cost FROM trader_holdings WHERE user_id = ? AND basket_id = ? AND units > 0")
@@ -469,7 +573,7 @@ async function positionValueAndCost(userId: number, basketId: number): Promise<{
   if (!row) return null;
   try {
     const nav = await getTraderBasketNavLive(basketId, { strict: true });
-    return { value: row.units * nav, cost: row.cost };
+    return { value: row.units * nav, cost: row.cost, hasDeadLeg: false };
   } catch {
     return null;
   }
@@ -502,10 +606,22 @@ export async function checkExitRules(): Promise<void> {
     if (!reason) continue;
     try {
       const basket = getBasket(r.basket_id);
-      await redeemFromBasket(r.user_id, r.basket_id, 1, `${reason} — auto-redeemed ${basket?.name ?? "basket"}`);
+      // allowUnpriced: the rule already fired on a valuation that counted dead
+      // legs as worthless. Without this, ONE unrouteable token would throw
+      // UnpricedLegsError every tick and silently block the whole exit —
+      // a stop-loss that never sells is worse than no stop-loss.
+      await redeemFromBasket(
+        r.user_id,
+        r.basket_id,
+        1,
+        `${reason} — auto-exited ${basket?.name ?? "basket"}` +
+          (pos.hasDeadLeg ? " (a leg had no route and was written off)" : ""),
+        { allowUnpriced: true }
+      );
       clearPositionRule(r.user_id, r.basket_id);
     } catch {
-      // live data hiccup — leave the rule armed; next pass retries
+      // partial fill or live-data hiccup — whatever sold is already recorded;
+      // leave the rule armed so the next pass finishes the job
     }
   }
 }

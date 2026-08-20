@@ -53,9 +53,8 @@ export default async function TreasuryPage() {
         <div>
           <h1 className="display text-[34px]">Treasury &amp; burn</h1>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-ink2">
-            Every fee the protocol earns is itemised here. Fees fund the treasury, the treasury
-            deploys into baskets, and the profit from those positions buys back and burns the
-            platform token.
+            Every fee the protocol earns is itemised here, with the on-chain signature that
+            settled it. All of it is earmarked to buy back and burn the platform token.
           </p>
         </div>
         <div className="flex gap-2.5">

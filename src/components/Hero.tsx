@@ -4,6 +4,7 @@ import { Delta } from "./Delta";
 import { TokenIcon } from "./TokenIcon";
 import { Sparkline } from "./Sparkline";
 import { WeaveFloor } from "./WeaveFloor";
+import { SpinRing } from "./SpinRing";
 import { fmtUsd } from "@/lib/format";
 import type { MarketRow } from "./MarketsTable";
 
@@ -42,6 +43,26 @@ export function Hero({
       </div>
 
       <div className="relative mx-auto max-w-6xl px-4 pb-[230px] pt-16 sm:pt-24">
+        {/* the hero's physical object: spinning ring + tilted flagship card */}
+        <div
+          className="hero-object rise pointer-events-none absolute right-0 top-16"
+          style={{ animationDelay: "300ms" }}
+        >
+          <SpinRing size={320} />
+          {topBasket && (
+            <Link
+              href={`/baskets/${topBasket.id}`}
+              className="tilt-card card pointer-events-auto absolute -bottom-10 -left-16 block w-[220px] p-4"
+            >
+              <div className="th">Flagship basket</div>
+              <div className="mt-1 text-[15px] font-semibold">{topBasket.name}</div>
+              <div className="mt-1.5 flex items-center justify-between">
+                <Delta value={topBasket.change24h} suffix="24h" />
+                <span className="text-[11px] text-brand">Trade →</span>
+              </div>
+            </Link>
+          )}
+        </div>
         <div className="rise flex flex-wrap items-center gap-2">
           <span className="chip chip-on">
             <span className="live-dot inline-block h-1.5 w-1.5 rounded-full bg-brand" />
@@ -52,7 +73,7 @@ export function Hero({
         </div>
 
         <h1
-          className="display rise mt-6 max-w-4xl"
+          className="display rise mt-6 max-w-4xl lg:max-w-[58%]"
           style={{ animationDelay: "60ms", fontSize: "clamp(2.6rem, 7.5vw, 5.2rem)" }}
         >
           Buy the whole
@@ -64,9 +85,9 @@ export function Hero({
           className="rise mt-6 max-w-xl text-[15px] leading-relaxed text-ink2"
           style={{ animationDelay: "120ms" }}
         >
-          Weighted index baskets of real pump.fun memecoins — and squads of the
-          KOL wallets that actually trade them. One position, one thesis, exits
-          that fire without you watching.
+          Weighted index baskets of real Solana memecoins — every buy is a real
+          on-chain swap from your own wallet. Track the KOL wallets that move
+          them, and set exits that fire without you watching.
         </p>
 
         <div className="rise mt-8 flex flex-wrap items-center gap-3" style={{ animationDelay: "180ms" }}>

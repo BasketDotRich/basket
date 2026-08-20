@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { cls, fmtUsd } from "@/lib/format";
 
+// mirrors PLATFORM_FEE_BPS on the server (src/lib/swap.ts)
+const PLATFORM_FEE_PCT = 0.5;
+
 export type PanelRule = {
   tp_pct: number | null;
   sl_pct: number | null;
@@ -297,7 +300,9 @@ export function InvestPanel({
 
           <p className="text-[11px] leading-relaxed text-ink3">
             Real Jupiter swaps from your wallet — tokens land in your wallet, weighted like this
-            basket. 10% fee on realised profit only; fees fund buyback &amp; burn.
+            basket. Costs: {PLATFORM_FEE_PCT}% per swap (both ways) plus 10% of realised profit
+            when you exit in the green. Never on principal, never on a loss. All fees fund
+            buyback &amp; burn.
           </p>
 
           {!confirming ? (

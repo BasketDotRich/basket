@@ -67,8 +67,11 @@ export default async function BasketsPage() {
       <section>
         <h2 className="mb-1 text-lg font-semibold tracking-tight">Trader baskets</h2>
         <p className="mb-4 text-sm text-ink3">
-          Baskets of trader wallets — one investment copies the whole squad.{" "}
-          <span className="text-ink2">NAV tracks each wallet&apos;s real on-chain value.</span>
+          Squads of real KOL wallets, tracked live on-chain.{" "}
+          <span className="chip chip-gold">TRACKING ONLY</span>{" "}
+          <span className="text-ink2">
+            NAV follows each wallet&apos;s real value — copy-trade execution is coming.
+          </span>
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {traders.map((b) => (

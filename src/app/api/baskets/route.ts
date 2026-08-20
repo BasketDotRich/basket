@@ -139,29 +139,51 @@ export async function POST(req: Request) {
       ).run(t.mint, meta.symbol, meta.name, meta.icon, meta.decimals);
     }
 
-    let feeCoin: { sol: number; usd: number };
+    // Basket + its tokens go in ONE transaction, BEFORE any money moves. A
+    // half-written basket must never exist, and the irreversible on-chain fee
+    // must never be charged for a basket that failed to save.
+    let basketId: number;
+    db.exec("BEGIN");
     try {
-      feeCoin = await chargeCreationFee(user.id, name);
+      const res = db
+        .prepare(
+          "INSERT INTO baskets (owner_id, kind, name, description, emoji, horizon, is_public, created_at) VALUES (?, 'coin', ?, ?, ?, ?, ?, ?)"
+        )
+        .run(user.id, name, description, emoji, horizon, isPublic ? 1 : 0, Date.now());
+      basketId = Number(res.lastInsertRowid);
+      for (const t of items) {
+        db.prepare("INSERT INTO basket_tokens (basket_id, mint, weight) VALUES (?, ?, ?)").run(
+          basketId,
+          t.mint,
+          t.weight / total
+        );
+      }
+      db.exec("COMMIT");
     } catch (e) {
+      db.exec("ROLLBACK");
+      console.error("basket insert failed", e);
+      return NextResponse.json({ error: "Could not save the basket" }, { status: 500 });
+    }
+
+    let feeCoin: { sol: number; usd: number; signature: string | null; waived: boolean };
+    try {
+      feeCoin = await chargeCreationFee(user.id, name, basketId);
+    } catch (e) {
+      // Fee failed — undo the basket so the user is never left with an
+      // unpaid-for basket or an unexplained charge.
+      db.exec("BEGIN");
+      try {
+        db.prepare("DELETE FROM basket_tokens WHERE basket_id = ?").run(basketId);
+        db.prepare("DELETE FROM baskets WHERE id = ?").run(basketId);
+        db.exec("COMMIT");
+      } catch {
+        db.exec("ROLLBACK");
+      }
       return NextResponse.json(
         { error: e instanceof TreasuryError ? e.message : "Could not charge the creation fee" },
         { status: 400 }
       );
     }
-    const res = db
-      .prepare(
-        "INSERT INTO baskets (owner_id, kind, name, description, emoji, horizon, is_public, created_at) VALUES (?, 'coin', ?, ?, ?, ?, ?, ?)"
-      )
-      .run(user.id, name, description, emoji, horizon, isPublic ? 1 : 0, Date.now());
-    const basketId = Number(res.lastInsertRowid);
-    for (const t of items) {
-      db.prepare("INSERT INTO basket_tokens (basket_id, mint, weight) VALUES (?, ?, ?)").run(
-        basketId,
-        t.mint,
-        t.weight / total
-      );
-    }
-    db.prepare("UPDATE treasury_ledger SET basket_id = ? WHERE id = (SELECT MAX(id) FROM treasury_ledger WHERE kind = 'creation_fee')").run(basketId);
     return NextResponse.json({ ok: true, id: basketId, fee: feeCoin });
   }
 
@@ -190,28 +212,45 @@ export async function POST(req: Request) {
     if (!exists) return NextResponse.json({ error: "Unknown trader in basket" }, { status: 400 });
   }
 
-  let feeTrader: { sol: number; usd: number };
+  let basketId: number;
+  db.exec("BEGIN");
   try {
-    feeTrader = await chargeCreationFee(user.id, name);
+    const res = db
+      .prepare(
+        "INSERT INTO baskets (owner_id, kind, name, description, emoji, horizon, is_public, created_at) VALUES (?, 'trader', ?, ?, ?, ?, ?, ?)"
+      )
+      .run(user.id, name, description, emoji, horizon, isPublic ? 1 : 0, Date.now());
+    basketId = Number(res.lastInsertRowid);
+    for (const t of items) {
+      db.prepare("INSERT INTO basket_traders (basket_id, trader_id, weight) VALUES (?, ?, ?)").run(
+        basketId,
+        t.id,
+        t.weight / total
+      );
+    }
+    db.exec("COMMIT");
   } catch (e) {
+    db.exec("ROLLBACK");
+    console.error("basket insert failed", e);
+    return NextResponse.json({ error: "Could not save the basket" }, { status: 500 });
+  }
+
+  let feeTrader: { sol: number; usd: number; signature: string | null; waived: boolean };
+  try {
+    feeTrader = await chargeCreationFee(user.id, name, basketId);
+  } catch (e) {
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM basket_traders WHERE basket_id = ?").run(basketId);
+      db.prepare("DELETE FROM baskets WHERE id = ?").run(basketId);
+      db.exec("COMMIT");
+    } catch {
+      db.exec("ROLLBACK");
+    }
     return NextResponse.json(
       { error: e instanceof TreasuryError ? e.message : "Could not charge the creation fee" },
       { status: 400 }
     );
   }
-  const res = db
-    .prepare(
-      "INSERT INTO baskets (owner_id, kind, name, description, emoji, horizon, is_public, created_at) VALUES (?, 'trader', ?, ?, ?, ?, ?, ?)"
-    )
-    .run(user.id, name, description, emoji, horizon, isPublic ? 1 : 0, Date.now());
-  const basketId = Number(res.lastInsertRowid);
-  for (const t of items) {
-    db.prepare("INSERT INTO basket_traders (basket_id, trader_id, weight) VALUES (?, ?, ?)").run(
-      basketId,
-      t.id,
-      t.weight / total
-    );
-  }
-  db.prepare("UPDATE treasury_ledger SET basket_id = ? WHERE id = (SELECT MAX(id) FROM treasury_ledger WHERE kind = 'creation_fee')").run(basketId);
   return NextResponse.json({ ok: true, id: basketId, fee: feeTrader });
 }

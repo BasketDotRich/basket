@@ -30,9 +30,9 @@ export default async function TokenomicsPage() {
       sub: "itemised on the public ledger",
     },
     {
-      label: "WORK",
-      title: "Deployed into top baskets",
-      sub: "fees compound instead of sitting idle",
+      label: "PROOF",
+      title: "On-chain, itemised",
+      sub: "every fee row carries its signature",
     },
     {
       label: "RESULT",
@@ -47,7 +47,7 @@ export default async function TokenomicsPage() {
     ["PRE-MINE / TEAM / VC", "None"],
     ["EMISSION", "None — no inflation"],
     ["VALUE ENGINE", "Buyback-and-burn"],
-    ["BUYBACK SOURCE", `${PERFORMANCE_FEE_BPS / 100}% performance fee + ${CREATION_FEE_SOL} SOL creation fee + treasury profits`],
+    ["BUYBACK SOURCE", `${PERFORMANCE_FEE_BPS / 100}% performance fee + 0.5% swap fee + ${CREATION_FEE_SOL} SOL creation fee`],
     ["FEES ACCRUED TO DATE", fmtUsd(stats.totalInflow)],
     ["QUEUED FOR BURN", fmtUsd(stats.pendingBurn)],
   ];
@@ -60,13 +60,13 @@ export default async function TokenomicsPage() {
     },
     {
       n: "02",
-      title: "Treasury that works",
-      body: "Collected fees deploy into the most subscribed baskets. Treasury profit doesn't pay anyone — it queues for the burn.",
+      title: "Swap fee, both ways",
+      body: "0.5% routes to the protocol on every buy and every sell, on top of the performance fee. Volume funds the burn even in a flat market.",
     },
     {
       n: "03",
       title: "Public ledger",
-      body: "Every fee, deploy and burn is a row on the treasury page, live from the same database that moves the money.",
+      body: "Every fee and burn is a row on the treasury page with its on-chain signature, live from the same database that moves the money.",
     },
     {
       n: "04",
@@ -152,7 +152,7 @@ export default async function TokenomicsPage() {
       <div className="mt-14 rounded-lg border border-gold/30 bg-gold/5 p-5">
         <Eyebrow>STATUS</Eyebrow>
         <p className="mt-2 text-[13px] leading-relaxed text-ink2">
-          The economic engine — performance fees, creation fees, treasury deploys — is live in the
+          The economic engine — performance fees and creation fees, collected on-chain — is live in the
           product today{sol ? ` (${CREATION_FEE_SOL} SOL ≈ ${fmtUsd(CREATION_FEE_SOL * sol)} right now)` : ""}.
           The token itself is <strong className="text-gold">not yet launched</strong>; when it is,
           it launches fair with no pre-mine. This page is the source of truth for the model — no

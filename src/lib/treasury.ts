@@ -115,7 +115,8 @@ export class TreasuryError extends Error {}
  */
 export async function chargeCreationFee(
   userId: number,
-  basketName: string
+  basketName: string,
+  basketId: number
 ): Promise<{ sol: number; usd: number; signature: string | null; waived: boolean }> {
   const price = await solPriceUsd();
   if (price == null) {
@@ -130,12 +131,13 @@ export async function chargeCreationFee(
       amountUsd: 0,
       amountSol: 0,
       userId,
+      basketId,
       detail: `Fee waived for "${basketName}" — TREASURY_WALLET not configured`,
     });
     return { sol: 0, usd: 0, signature: null, waived: true };
   }
 
-  const { getAccountWallet, getSolBalance, signAndSendForAccount, LAMPORTS_PER_SOL, WITHDRAW_RESERVE_LAMPORTS } =
+  const { getAccountWallet, getSolBalance, signSendConfirmOne, LAMPORTS_PER_SOL, WITHDRAW_RESERVE_LAMPORTS } =
     await import("./accounts");
   const wallet = getAccountWallet(userId);
   if (!wallet) throw new TreasuryError("This account has no wallet yet");
@@ -148,16 +150,20 @@ export async function chargeCreationFee(
   }
   const { buildSolTransfer } = await import("./swap");
   const tx = await buildSolTransfer(wallet.address, dest, lamports);
-  const [signature] = await signAndSendForAccount(userId, [tx]);
+  // Confirmed, not just accepted — a dropped transfer must never book revenue.
+  const signature = await signSendConfirmOne(userId, tx);
 
   const db = getDb();
+  // basket_id is bound directly: a MAX(id) back-patch would cross-attribute
+  // fees whenever two people create a basket at the same moment.
   db.prepare(
-    "INSERT INTO treasury_ledger (ts, kind, amount_usd, amount_sol, user_id, basket_id, detail) VALUES (?, 'creation_fee', ?, ?, ?, NULL, ?)"
+    "INSERT INTO treasury_ledger (ts, kind, amount_usd, amount_sol, user_id, basket_id, detail) VALUES (?, 'creation_fee', ?, ?, ?, ?, ?)"
   ).run(
     Date.now(),
     usd,
     CREATION_FEE_SOL,
     userId,
+    basketId,
     `${CREATION_FEE_SOL} SOL to create "${basketName}" · ${signature}`
   );
   db.prepare(
