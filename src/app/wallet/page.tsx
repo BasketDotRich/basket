@@ -99,7 +99,7 @@ export default function WalletPage() {
     <div className="mx-auto max-w-4xl px-4 py-10">
       <h1 className="display text-[34px]">Wallet</h1>
       <p className="mt-1 text-sm text-ink3">
-        Your account&apos;s own Solana wallet. Deposit SOL to fund it, withdraw any time — on-chain basket buys from this balance are rolling out.
+        Your account&apos;s own Solana wallet. Deposit SOL, buy baskets on-chain, sell back to SOL, withdraw any time.
       </p>
 
       <div className="mt-6">
