@@ -52,10 +52,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <main className="flex-1">{children}</main>
         <footer className="border-t border-hairline py-8">
           <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 text-xs leading-relaxed text-ink3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold tracking-tight text-ink2">basket</span>
               <span className="text-ink3">·</span>
               <span>basket.rich</span>
+              <span className="text-ink3">·</span>
+              <a href="/tokenomics" className="hover:text-ink2">tokenomics</a>
+              <span className="text-ink3">·</span>
+              <a href="https://github.com/BasketDotRich" target="_blank" rel="noreferrer" className="hover:text-ink2">
+                github
+              </a>
             </div>
             <p>
               Every account gets its own Solana wallet — deposit, trade baskets, withdraw any

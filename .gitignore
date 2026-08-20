@@ -49,3 +49,4 @@ next-env.d.ts
 
 # local test cookie jars
 ck*.txt
+.prod-encryption-key.backup.txt

@@ -58,9 +58,14 @@ export default async function TreasuryPage() {
             platform token.
           </p>
         </div>
-        <Link href="/baskets/new" className="btn-brand rounded-xl px-5 py-2.5 text-sm">
-          Create a basket
-        </Link>
+        <div className="flex gap-2.5">
+          <Link href="/tokenomics" className="btn-ghost rounded-xl px-5 py-2.5 text-sm">
+            $BASKET tokenomics
+          </Link>
+          <Link href="/baskets/new" className="btn-brand rounded-xl px-5 py-2.5 text-sm">
+            Create a basket
+          </Link>
+        </div>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline lg:grid-cols-3">
