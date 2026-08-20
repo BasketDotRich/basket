@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { cls, fmtUsd, timeAgo } from "@/lib/format";
 import { AccountWallet } from "@/components/AccountWallet";
+import { WalletHoldings } from "@/components/WalletHoldings";
 
 type Tx = {
   id: number;
@@ -103,6 +104,7 @@ export default function WalletPage() {
 
       <div className="mt-6">
         <AccountWallet />
+        <div className="mt-4"><WalletHoldings /></div>
       </div>
 
       <h2 className="mb-3 mt-8 text-lg font-semibold tracking-tight">Practice balance</h2>

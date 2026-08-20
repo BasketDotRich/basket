@@ -9,6 +9,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { LineChart } from "@/components/LineChart";
 import { Donut } from "@/components/Donut";
 import { InvestPanel } from "@/components/InvestPanel";
+import { OnchainPanel } from "@/components/OnchainPanel";
 
 type TokenRow = {
   mint: string;
@@ -374,6 +375,7 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
             rule={basket.myRule ?? null}
             onDone={load}
           />
+          {basket.kind === "coin" && <OnchainPanel basketId={basket.id} signedIn={me != null} />}
           {basket.mine && basket.investors === 0 && (
             <>
               <button
