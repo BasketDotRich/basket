@@ -196,3 +196,49 @@ export async function verifySignature(signature: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Build an unsigned SPL token transfer.
+ *
+ * Used by the burn engine to move bought $BASKET to the incinerator. Creates
+ * the destination token account if it does not exist yet — the incinerator has
+ * no ATA for a brand-new mint, and without this the very first burn would fail.
+ */
+export async function buildTokenTransfer(
+  fromPubkey: string,
+  toPubkey: string,
+  mint: string,
+  rawAmount: string
+): Promise<string> {
+  const { Connection, PublicKey, TransactionMessage, VersionedTransaction } = await import(
+    "@solana/web3.js"
+  );
+  const {
+    getAssociatedTokenAddress,
+    createAssociatedTokenAccountInstruction,
+    createTransferInstruction,
+  } = await import("@solana/spl-token");
+
+  const conn = new Connection(rpcUrl(), "confirmed");
+  const from = new PublicKey(fromPubkey);
+  const to = new PublicKey(toPubkey);
+  const mintKey = new PublicKey(mint);
+
+  const fromAta = await getAssociatedTokenAddress(mintKey, from, true);
+  const toAta = await getAssociatedTokenAddress(mintKey, to, true);
+
+  const instructions = [];
+  const toInfo = await conn.getAccountInfo(toAta);
+  if (!toInfo) {
+    instructions.push(createAssociatedTokenAccountInstruction(from, toAta, to, mintKey));
+  }
+  instructions.push(createTransferInstruction(fromAta, toAta, from, BigInt(rawAmount)));
+
+  const { blockhash } = await conn.getLatestBlockhash("confirmed");
+  const msg = new TransactionMessage({
+    payerKey: from,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message();
+  return Buffer.from(new VersionedTransaction(msg).serialize()).toString("base64");
+}

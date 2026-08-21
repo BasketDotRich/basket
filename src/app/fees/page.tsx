@@ -159,11 +159,11 @@ export default async function FeesPage() {
           running</strong> — every figure above is real, taken from real transactions.
         </p>
         <p className="mt-2 text-[13px] leading-relaxed text-ink2">
-          The final step is <strong className="text-gold">not live yet</strong>: $BASKET has not
-          launched, so nothing can be bought back or burned. Profit accrues as a queue —
-          &ldquo;Queued for burn&rdquo; above is exactly what the burn engine will execute
-          against on day one. We would rather show you a zero in &ldquo;Burned to date&rdquo; than
-          a number that hasn&apos;t happened.
+          $BASKET is live, so the full loop now runs end to end: realised treasury profit buys
+          the token on the open market and sends it to the incinerator, where nobody can spend
+          it again. &ldquo;Burned to date&rdquo; only moves when a burn actually settles
+          on-chain, and every burn row carries the buy and burn signatures — a zero there means
+          no burn has happened yet, never a number we have rounded up to.
         </p>
       </div>
 

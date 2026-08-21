@@ -217,6 +217,15 @@ export async function runTreasuryCycle(): Promise<void> {
   } catch {
     /* non-fatal */
   }
+  // Burn BEFORE redeploying: realised profit is owed to the burn, not to the
+  // next position. Deploying it first would compound money that is already
+  // promised to token holders.
+  try {
+    const { runBurnCycle } = await import("./burn");
+    await runBurnCycle();
+  } catch {
+    /* non-fatal */
+  }
   try {
     await deployTreasury();
   } catch {

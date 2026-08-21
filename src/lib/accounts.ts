@@ -114,6 +114,30 @@ export async function withdrawSol(
  * function returned, so a dropped or failed swap can never become a phantom
  * holding. Throws if the transaction did not confirm.
  */
+/**
+ * Sign, send and confirm using an encrypted key directly rather than a user
+ * account. Used by the burn engine for the treasury and burn-operator wallets,
+ * which are protocol-owned and have no user row of their own.
+ */
+export async function signSendConfirmOneWith(
+  encryptedKey: string,
+  base64Tx: string
+): Promise<string> {
+  const { Connection, VersionedTransaction } = await import("@solana/web3.js");
+  const conn = new Connection(rpcUrl(), "confirmed");
+  const signer = loadSigner(encryptedKey);
+  const tx = VersionedTransaction.deserialize(Buffer.from(base64Tx, "base64"));
+  tx.sign([signer]);
+  const latest = await conn.getLatestBlockhash("confirmed");
+  const signature = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
+  const res = await conn.confirmTransaction(
+    { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+    "confirmed"
+  );
+  if (res.value.err) throw new CustodyError(`Transaction failed on-chain (${signature})`);
+  return signature;
+}
+
 export async function signSendConfirmOne(userId: number, base64Tx: string): Promise<string> {
   const wallet = getAccountWallet(userId);
   if (!wallet) throw new CustodyError("This account has no wallet yet");

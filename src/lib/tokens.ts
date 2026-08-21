@@ -58,6 +58,16 @@ export const PLAYSTYLES: { name: string; description: string; source: string }[]
 
 export const CURATED_TOKENS: CuratedToken[] = [
   {
+    mint: "DAGoEaxqrERaB3rBxj7mGwVKo3uHuhy9afUAZhqjpump",
+    symbol: "BASKET",
+    name: "Basket",
+    icon: "https://dd.dexscreener.com/ds-data/tokens/solana/DAGoEaxqrERaB3rBxj7mGwVKo3uHuhy9afUAZhqjpump.png?size=lg",
+    decimals: 6,
+    coingeckoId: null,
+    genres: ["Solana Core","Launchpad","Fresh 2026"],
+    launchedAt: null,
+  },
+  {
     mint: "9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump",
     symbol: "FARTCOIN",
     name: "Fartcoin",

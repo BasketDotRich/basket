@@ -16,6 +16,16 @@ import { getDb } from "./db";
 import { getPrices } from "./prices";
 import { SOL_MINT } from "./wallets";
 
+/**
+ * The platform token. Buyback & burn buys this off the market with realised
+ * treasury profit and sends it to the incinerator.
+ * Launched on pump.fun; mint + freeze authority both revoked.
+ */
+export const BASKET_MINT = "DAGoEaxqrERaB3rBxj7mGwVKo3uHuhy9afUAZhqjpump";
+
+/** Where burned supply goes — a program address nobody can spend from. */
+export const BURN_ADDRESS = "1nc1nerator11111111111111111111111111111111";
+
 export const PERFORMANCE_FEE_BPS = 1000; // 10% of realised profit
 export const CREATION_FEE_SOL = 0.5;
 
