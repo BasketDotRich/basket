@@ -6,6 +6,13 @@ import { TOKENS_BY_MINT } from "./tokens";
 
 export type LivePrice = { usdPrice: number; priceChange24h: number | null };
 export type MarketStats = {
+  /**
+   * DexScreener quotes a price in the same response as mcap and volume, so we
+   * get it for free in a call we already make. Using it as the display price
+   * removes a whole dependency on Jupiter's rate-limited free tier, which was
+   * 429-ing and leaving most of the universe with no price at all.
+   */
+  price: number | null;
   mcap: number | null;
   volume24h: number | null;
   liquidity: number | null;
@@ -191,6 +198,7 @@ export async function getMarketStats(mints: string[]): Promise<Record<string, Ma
           );
           if (!res.ok) throw new Error(`dexscreener ${res.status}`);
           const pairs = (await res.json()) as Array<{
+            priceUsd?: string;
             baseToken?: { address?: string };
             liquidity?: { usd?: number };
             volume?: { h24?: number };
@@ -209,7 +217,9 @@ export async function getMarketStats(mints: string[]): Promise<Record<string, Ma
           }
           for (const mint of group) {
             const pair = best.get(mint);
+            const px = pair?.priceUsd != null ? Number(pair.priceUsd) : null;
             const entry: MarketStats = {
+              price: px != null && Number.isFinite(px) && px > 0 ? px : null,
               mcap: pair?.marketCap ?? pair?.fdv ?? null,
               volume24h: pair?.volume?.h24 ?? null,
               liquidity: pair?.liquidity?.usd ?? null,

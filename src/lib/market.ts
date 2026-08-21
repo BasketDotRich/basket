@@ -38,14 +38,15 @@ export async function getMarketRows(): Promise<{
     const ov = t.coingeckoId ? overview[t.coingeckoId] : undefined;
     // A five-figure "24h change" means the token had no price yesterday —
     // that's a listing artifact, not performance. Label it, don't print it.
-    const rawCh = prices[t.mint]?.priceChange24h ?? ov?.change24h ?? null;
+    const rawCh =
+      prices[t.mint]?.priceChange24h ?? stats[t.mint]?.priceChange24h ?? ov?.change24h ?? null;
     return {
       mint: t.mint,
       symbol: t.symbol,
       name: t.name,
       icon: t.icon,
       genres: t.genres,
-      price: prices[t.mint]?.usdPrice ?? ov?.price ?? null,
+      price: prices[t.mint]?.usdPrice ?? stats[t.mint]?.price ?? ov?.price ?? null,
       change24h: rawCh != null && Math.abs(rawCh) <= 400 ? rawCh : null,
       newListing: rawCh != null && Math.abs(rawCh) > 400,
       change7d: ov?.change7d ?? null,
