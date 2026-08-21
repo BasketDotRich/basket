@@ -893,6 +893,14 @@ declare global {
 /** Checks armed exit rules every minute while the server runs. */
 export function ensureRulesEngine(): void {
   if (globalThis.__bRulesEngine) return;
+  // One line at startup so the deploy log always states which engines this
+  // process is actually running with — reading the env var per tick is
+  // invisible, and an engine that silently ISN'T running is the failure mode
+  // that's hardest to notice.
+  console.log(
+    `[engines] mirror=${process.env.MIRROR_ENGINE_ENABLED === "1" ? "ON" : "off"} ` +
+      `treasury=${process.env.TREASURY_ENGINE_ENABLED === "1" ? "ON" : "off"}`
+  );
   globalThis.__bRulesEngine = setInterval(async () => {
     if (globalThis.__bRulesBusy) return;
     globalThis.__bRulesBusy = true;
@@ -901,14 +909,11 @@ export function ensureRulesEngine(): void {
       // Keep every standing squad allocation in step with what its wallets
       // hold. Webhooks make this near-instant; this tick is the safety net
       // that catches anything a missed delivery would otherwise strand.
-      // KILL SWITCH — the mirror engine is OFF by default.
-      //
-      // A preflight audit found defects that can spend without bound: an
-      // unpriced held leg reads as have=0, so the engine re-buys a position it
-      // already owns on every tick until the wallet is empty. It also races
-      // invest and redeem, which take no lock. None of this has ever run
-      // against a real allocation, so disabling costs nothing and leaving it
-      // on risks real money. Set MIRROR_ENGINE_ENABLED=1 once fixed.
+      // KILL SWITCH — unset MIRROR_ENGINE_ENABLED to stop all mirror
+      // spending instantly on the next tick, no redeploy needed. The preflight
+      // audit's findings (unpriced legs read as have=0, invest/redeem races)
+      // are fixed — unpriceable legs now abort the sync and invest/redeem
+      // share the mirror lock — and the engine is live.
       if (process.env.MIRROR_ENGINE_ENABLED === "1") {
         const { activeAllocations, syncSquadMirror } = await import("./mirror");
         for (const a of activeAllocations()) {
