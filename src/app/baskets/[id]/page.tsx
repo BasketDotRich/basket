@@ -373,24 +373,14 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
               </p>
             </div>
           )}
-          {basket.kind === "coin" ? (
-            <InvestPanel
-              basketId={basket.id}
-              signedIn={me != null}
-              myValue={basket.myValue}
-              rule={basket.myRule ?? null}
-              onDone={load}
-            />
-          ) : (
-            <div className="card p-5 text-[13px] leading-relaxed text-ink2">
-              <span className="chip chip-gold mb-2">TRACKING ONLY</span>
-              <p className="mt-2">
-                Trader baskets track their wallets&apos; real on-chain performance. Copy-trade
-                execution — mirroring their entries with your SOL — is coming; nothing is
-                investable here yet, and nothing here is simulated.
-              </p>
-            </div>
-          )}
+          <InvestPanel
+            basketId={basket.id}
+            kind={basket.kind}
+            signedIn={me != null}
+            myValue={basket.myValue}
+            rule={basket.myRule ?? null}
+            onDone={load}
+          />
           {basket.mine && basket.investors === 0 && (
             <>
               <button
@@ -459,7 +449,7 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
             {basket.kind === "coin" ? (
               <>Investing executes real Jupiter swaps from your account wallet into every token, weighted like the basket. Redeeming swaps the position back to SOL in your wallet.</>
             ) : (
-              <>This basket&apos;s NAV tracks the real on-chain value of the member wallets (SOL, stables and tracked tokens) — live attribution, no simulation.</>
+              <>NAV tracks the real on-chain value of these wallets (SOL, stables and tracked tokens). Trades are detected within about a second of landing, so a mirror reflects what they hold now — not what they held five minutes ago.</>
             )}
           </div>
         </div>

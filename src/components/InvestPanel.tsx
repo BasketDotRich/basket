@@ -20,17 +20,21 @@ export type PanelRule = {
  */
 export function InvestPanel({
   basketId,
+  kind = "coin",
   signedIn,
   myValue,
   rule,
   onDone,
 }: {
   basketId: number;
+  /** Buying a squad mirrors live wallets, so the copy has to differ. */
+  kind?: "coin" | "trader";
   signedIn: boolean;
   myValue: number;
   rule?: PanelRule;
   onDone?: () => void;
 }) {
+  const isSquad = kind === "trader";
   const router = useRouter();
   const [tab, setTab] = useState<"invest" | "redeem">("invest");
   const [amount, setAmount] = useState("");
@@ -299,10 +303,22 @@ export function InvestPanel({
           )}
 
           <p className="text-[11px] leading-relaxed text-ink3">
-            Real Jupiter swaps from your wallet — tokens land in your wallet, weighted like this
-            basket. Costs: {PLATFORM_FEE_PCT}% per swap (both ways) plus 10% of realised profit
-            when you exit in the green. Never on principal, never on a loss. All fees fund
-            buyback &amp; burn.
+            {isSquad ? (
+              <>
+                Your wallet buys what these wallets hold right now, weighted by member and by
+                position size — and it mirrors their cash too, so if the squad is 60% in
+                positions only 60% of this goes in. The tokens land in your wallet; nothing is
+                pooled.
+              </>
+            ) : (
+              <>
+                Real Jupiter swaps from your wallet — tokens land in your wallet, weighted like
+                this basket.
+              </>
+            )}{" "}
+            Costs: {PLATFORM_FEE_PCT}% per swap (both ways) plus 10% of realised profit when you
+            exit in the green. Never on principal, never on a loss. All fees fund buyback &amp;
+            burn.
           </p>
 
           {!confirming ? (
