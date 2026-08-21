@@ -81,7 +81,7 @@ export async function getPrices(
 
   if (missing.length > 0) {
     await Promise.all(
-      chunk(missing, 50).map(async (group) => {
+      chunk(missing, 30).map(async (group) => {
         try {
           // Coalesce concurrent cold callers onto one upstream request per
           // chunk — otherwise every request in a burst stampedes Jupiter.
@@ -114,8 +114,13 @@ export async function getPrices(
               result[mint] = entry;
             }
           }
-        } catch {
-          // upstream failed entirely — nothing cached fresh for this group
+        } catch (e) {
+          // Log it. Swallowing this silently is how 44 tokens ended up
+          // showing no price with nothing at all in the logs to explain it.
+          console.error(
+            `[prices] batch of ${group.length} failed:`,
+            e instanceof Error ? e.message : e
+          );
         }
         // Stale fallback for anything still unpriced — this must run on BOTH
         // paths: a 200 that simply omits the mint (delisted, low liquidity)
