@@ -2,6 +2,8 @@ import Link from "next/link";
 import { CREATION_FEE_SOL, PERFORMANCE_FEE_BPS, getTreasuryStats, solPriceUsd } from "@/lib/treasury";
 import { fmtUsd } from "@/lib/format";
 
+const CA = "DAGoEaxqrERaB3rBxj7mGwVKo3uHuhy9afUAZhqjpump";
+
 export const dynamic = "force-dynamic";
 
 export const metadata = {
@@ -44,7 +46,10 @@ export default async function TokenomicsPage() {
   const glance = [
     ["CHAIN", "Solana · SPL"],
     ["LAUNCH", "Fair — pump.fun curve, like the coins we index"],
-    ["PRE-MINE / TEAM / VC", "None"],
+    ["MINT AUTHORITY", "Revoked — supply can never be increased"],
+    ["FREEZE AUTHORITY", "None — your tokens can never be frozen"],
+    ["TEAM SUPPLY", "10% locked"],
+    ["PRE-MINE / VC", "None"],
     ["EMISSION", "None — no inflation"],
     ["VALUE ENGINE", "Buyback-and-burn"],
     ["BUYBACK SOURCE", `${PERFORMANCE_FEE_BPS / 100}% performance fee + 0.5% swap fee + ${CREATION_FEE_SOL} SOL creation fee`],
@@ -88,6 +93,22 @@ export default async function TokenomicsPage() {
         All the value comes from one place: the protocol&apos;s real revenue buying the token back
         off the market and burning it. No pre-mine, no team bag, no emissions.
       </p>
+
+      {/* contract address */}
+      <div className="card mt-8 p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="th">CONTRACT ADDRESS</span>
+          <span className="chip chip-on">LIVE</span>
+        </div>
+        <code className="num mt-2 block overflow-x-auto rounded-lg border border-hairline bg-card2 px-3 py-2.5 text-[12.5px] text-ink">
+          {CA}
+        </code>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a href={`https://solscan.io/token/${CA}`} target="_blank" rel="noreferrer" className="btn-ghost rounded-lg px-4 py-2 text-[12.5px]">Solscan ↗</a>
+          <a href={`https://dexscreener.com/solana/${CA}`} target="_blank" rel="noreferrer" className="btn-ghost rounded-lg px-4 py-2 text-[12.5px]">DexScreener ↗</a>
+          <a href={`https://jup.ag/swap/SOL-${CA}`} target="_blank" rel="noreferrer" className="btn-brand rounded-lg px-4 py-2 text-[12.5px]">Trade on Jupiter ↗</a>
+        </div>
+      </div>
 
       {/* value engine pipeline */}
       <div className="mt-14">
