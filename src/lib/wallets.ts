@@ -113,6 +113,18 @@ function universeAddedAt(mint: string): number {
   return globalThis.__bUniverseAddedAt?.get(mint) ?? 0;
 }
 
+/**
+ * Force the next read of this wallet to hit the chain.
+ *
+ * Called the instant a Helius webhook reports a swap: without this the mirror
+ * would keep serving a cached balance for up to BALANCES_TTL and the "instant"
+ * detection would still act on stale holdings.
+ */
+export function invalidateWallet(wallet: string): void {
+  balancesCache.delete(wallet);
+  valueCache.delete(wallet);
+}
+
 /** Best-effort symbol for a mint from the cached universe. */
 export function mintSymbol(mint: string): string {
   const sym = globalThis.__bUniverseV2?.mints.get(mint);
