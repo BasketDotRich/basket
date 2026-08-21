@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { cls, fmtUsd, timeAgo } from "@/lib/format";
 import { AccountWallet } from "@/components/AccountWallet";
+import { TxDetail } from "@/components/TxDetail";
 import { WalletHoldings } from "@/components/WalletHoldings";
 import { TelegramLink } from "@/components/TelegramLink";
 
@@ -92,7 +93,7 @@ export default function WalletPage() {
                         </span>
                       ) : null}
                     </div>
-                    <div className="truncate text-xs text-ink3">{tx.detail}</div>
+                    <div className="truncate text-xs text-ink3"><TxDetail detail={tx.detail} /></div>
                   </div>
                   <div className="ml-auto text-right">
                     <div className={cls("num text-sm font-semibold", inflow ? "text-good" : "text-ink")}>

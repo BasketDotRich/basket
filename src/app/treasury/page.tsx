@@ -5,10 +5,12 @@ import {
   PERFORMANCE_FEE_BPS,
   getLedger,
   getTreasuryStats,
+  treasuryWallet,
   solPriceUsd,
 } from "@/lib/treasury";
 import { fmtUsd, timeAgo } from "@/lib/format";
 import { LineChart } from "@/components/LineChart";
+import { TxDetail } from "@/components/TxDetail";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,7 @@ export default async function TreasuryPage() {
   const stats = await getTreasuryStats();
   const ledger = getLedger(40);
   const sol = await solPriceUsd();
+  const treasuryAddr = treasuryWallet();
   const db = getDb();
 
   const snaps = db
@@ -123,6 +126,23 @@ export default async function TreasuryPage() {
         </div>
       </div>
 
+      {treasuryAddr && (
+        <div className="card mt-8 flex flex-wrap items-center gap-3 p-4">
+          <div className="min-w-0">
+            <div className="th">TREASURY WALLET · VERIFY ON-CHAIN</div>
+            <code className="num mt-1 block truncate text-[12.5px] text-ink2">{treasuryAddr}</code>
+          </div>
+          <a
+            href={`https://solscan.io/account/${treasuryAddr}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-ghost ml-auto shrink-0 rounded-lg px-4 py-2 text-[13px]"
+          >
+            Open on Solscan ↗
+          </a>
+        </div>
+      )}
+
       <h2 className="mb-2 mt-8 text-lg font-semibold tracking-tight">Ledger</h2>
       <div className="card overflow-x-auto">
         <table className="w-full min-w-[720px] text-[13px]">
@@ -149,7 +169,7 @@ export default async function TreasuryPage() {
                   <td className="py-2 pl-3">
                     <span className={`chip ${k.cls}`}>{k.label}</span>
                   </td>
-                  <td className="py-2 text-ink2">{r.detail}</td>
+                  <td className="py-2 text-ink2"><TxDetail detail={r.detail} /></td>
                   <td className="num py-2 text-right">
                     {r.amount_usd === 0 ? (
                       <span className="text-ink3">—</span>

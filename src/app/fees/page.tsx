@@ -4,6 +4,7 @@ import {
   PERFORMANCE_FEE_BPS,
   getTreasuryStats,
   solPriceUsd,
+  treasuryWallet,
 } from "@/lib/treasury";
 import { fmtUsd } from "@/lib/format";
 
@@ -23,6 +24,7 @@ const SWAP_FEE_PCT = 0.5;
 
 export default async function FeesPage() {
   const [stats, sol] = await Promise.all([getTreasuryStats(), solPriceUsd()]);
+  const treasuryAddr = treasuryWallet();
 
   const charges = [
     {
@@ -146,6 +148,30 @@ export default async function FeesPage() {
           <Link href="/treasury" className="text-brand hover:underline">treasury ledger</Link>.
         </p>
       </div>
+
+
+      {/* the address itself — the point of "verifiable" */}
+      {treasuryAddr && (
+        <div className="card mt-8 p-5">
+          <Eyebrow>VERIFY IT YOURSELF</Eyebrow>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink2">
+            This is the treasury wallet. Every fee on this page settled into it on-chain. You do
+            not have to trust the numbers above — open it on Solscan and read the balance and
+            every transaction directly.
+          </p>
+          <code className="num mt-3 block overflow-x-auto rounded-lg border border-hairline bg-card2 px-3 py-2.5 text-[12.5px] text-ink">
+            {treasuryAddr}
+          </code>
+          <a
+            href={`https://solscan.io/account/${treasuryAddr}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-ghost mt-3 inline-block rounded-lg px-4 py-2 text-[13px]"
+          >
+            Open treasury on Solscan ↗
+          </a>
+        </div>
+      )}
 
       {/* honest status */}
       <div className="mt-12 rounded-lg border border-gold/30 bg-gold/5 p-5">
