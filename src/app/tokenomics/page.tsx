@@ -30,9 +30,9 @@ export default async function TokenomicsPage() {
       sub: "itemised on the public ledger",
     },
     {
-      label: "PROOF",
-      title: "On-chain, itemised",
-      sub: "every fee row carries its signature",
+      label: "WORK",
+      title: "Deployed into the best baskets",
+      sub: "revenue compounds instead of sitting idle",
     },
     {
       label: "RESULT",
@@ -60,8 +60,8 @@ export default async function TokenomicsPage() {
     },
     {
       n: "02",
-      title: "Swap fee, both ways",
-      body: "0.5% routes to the protocol on every buy and every sell, on top of the performance fee. Volume funds the burn even in a flat market.",
+      title: "A treasury that works",
+      body: "Idle fee revenue is deployed into the best-performing public baskets. Profit is realised and queued for buyback & burn; the principal recycles into the next deployment, so the treasury compounds instead of draining.",
     },
     {
       n: "03",
@@ -152,7 +152,7 @@ export default async function TokenomicsPage() {
       <div className="mt-14 rounded-lg border border-gold/30 bg-gold/5 p-5">
         <Eyebrow>STATUS</Eyebrow>
         <p className="mt-2 text-[13px] leading-relaxed text-ink2">
-          The economic engine — performance fees and creation fees, collected on-chain — is live in the
+          The economic engine — swap fees, performance fees, creation fees, and treasury deployment — is live in the
           product today{sol ? ` (${CREATION_FEE_SOL} SOL ≈ ${fmtUsd(CREATION_FEE_SOL * sol)} right now)` : ""}.
           The token itself is <strong className="text-gold">not yet launched</strong>; when it is,
           it launches fair with no pre-mine. This page is the source of truth for the model — no

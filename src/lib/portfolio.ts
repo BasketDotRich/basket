@@ -760,6 +760,8 @@ declare global {
   var __bRulesEngine: ReturnType<typeof setInterval> | undefined;
   // eslint-disable-next-line no-var
   var __bRulesBusy: boolean | undefined;
+  // eslint-disable-next-line no-var
+  var __bTreasuryTick: number | undefined;
 }
 
 /** Checks armed exit rules every minute while the server runs. */
@@ -779,6 +781,19 @@ export function ensureRulesEngine(): void {
           await syncSquadMirror(a.user_id, a.basket_id);
         } catch {
           // one allocation failing must not stall the others
+        }
+      }
+
+      // Treasury works on a much slower clock than user positions — it is
+      // deploying accumulated revenue, not chasing candles. Once every 30
+      // ticks (~30 min) is plenty and keeps swap costs off the P&L.
+      globalThis.__bTreasuryTick = (globalThis.__bTreasuryTick ?? 0) + 1;
+      if (globalThis.__bTreasuryTick % 30 === 0) {
+        try {
+          const { runTreasuryCycle } = await import("./treasury-deploy");
+          await runTreasuryCycle();
+        } catch {
+          // treasury issues must never disturb user positions
         }
       }
     } catch {
