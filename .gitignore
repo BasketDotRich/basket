@@ -63,3 +63,8 @@ r*.json
 resp.json
 page.html
 X-THREAD.md
+
+# local AI tooling — never publish
+.claude/
+CLAUDE.md
+AGENTS.md
