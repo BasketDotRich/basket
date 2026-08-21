@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useCallback, useEffect, useState } from "react";
 import { cls, fmtQty, fmtUsd } from "@/lib/format";
 import { TokenIcon } from "./TokenIcon";
@@ -8,6 +10,9 @@ type Holding = {
   mint: string;
   symbol: string;
   name: string | null;
+  /** which basket bought this leg, so holdings read as index positions */
+  basketId?: number | null;
+  basketName?: string | null;
   icon: string | null;
   amount: number;
   price: number | null;
@@ -22,11 +27,18 @@ type Data = {
   totalUsd: number;
 };
 
-/** On-chain token holdings of the account wallet, with sell-to-SOL. */
+/**
+ * On-chain token holdings of the account wallet, grouped by the basket that
+ * bought them.
+ *
+ * Deliberately READ-ONLY. A basket is an index — you exit the whole position
+ * from the basket page, not one leg at a time. Selling a single token here
+ * would leave the remaining legs as an unbalanced version of an index nobody
+ * chose, and it silently desyncs the basket ledger from the wallet.
+ */
 export function WalletHoldings() {
   const [data, setData] = useState<Data | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [selling, setSelling] = useState<string | null>(null); // mint pending confirm
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string; sig?: string } | null>(null);
 
@@ -49,29 +61,6 @@ export function WalletHoldings() {
     return () => clearInterval(t);
   }, [load]);
 
-  async function sell(mint: string) {
-    setBusy(true);
-    setMsg(null);
-    try {
-      const res = await fetch("/api/wallet/sell", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mint, fraction: 1 }),
-      });
-      const d = await res.json();
-      if (!res.ok) {
-        setMsg({ kind: "err", text: d.error ?? "Sell failed" });
-        return;
-      }
-      setMsg({ kind: "ok", text: `Sold ${d.symbol} to SOL`, sig: d.signature });
-      setSelling(null);
-      load();
-    } catch {
-      setMsg({ kind: "err", text: "Network error — check Solscan before retrying" });
-    } finally {
-      setBusy(false);
-    }
-  }
 
   if (err) {
     return (
@@ -108,7 +97,7 @@ export function WalletHoldings() {
                 <th className="th py-2 pl-5 font-medium">Token</th>
                 <th className="th py-2 text-right font-medium">Amount</th>
                 <th className="th py-2 text-right font-medium">Value</th>
-                <th className="th py-2 pr-5 text-right font-medium" aria-label="Actions" />
+                <th className="th py-2 pr-5 text-right font-medium">Basket</th>
               </tr>
             </thead>
             <tbody>
@@ -125,30 +114,12 @@ export function WalletHoldings() {
                     {t.price != null ? fmtUsd(t.valueUsd) : <span className="text-ink3">unpriced</span>}
                   </td>
                   <td className="py-2.5 pr-5 text-right">
-                    {selling === t.mint ? (
-                      <span className="inline-flex gap-1.5">
-                        <button
-                          disabled={busy}
-                          onClick={() => sell(t.mint)}
-                          className="rounded-md border border-bad/50 px-2 py-1 text-[11px] font-medium text-bad hover:bg-bad/10"
-                        >
-                          {busy ? "Selling…" : "Confirm sell all"}
-                        </button>
-                        <button
-                          disabled={busy}
-                          onClick={() => setSelling(null)}
-                          className="rounded-md border border-hairline px-2 py-1 text-[11px] text-ink3 hover:text-ink"
-                        >
-                          ✕
-                        </button>
-                      </span>
+                    {t.basketName ? (
+                      <Link href={`/baskets/${t.basketId}`} className="text-[11.5px] text-brand hover:underline">
+                        {t.basketName}
+                      </Link>
                     ) : (
-                      <button
-                        onClick={() => { setSelling(t.mint); setMsg(null); }}
-                        className="rounded-md border border-hairline px-2.5 py-1 text-[11px] text-ink2 hover:border-brand hover:text-ink"
-                      >
-                        Sell → SOL
-                      </button>
+                      <span className="text-[11.5px] text-ink3">—</span>
                     )}
                   </td>
                 </tr>
