@@ -96,7 +96,7 @@ export default async function Home() {
     .map((k) => ({ ...k, s: (k.seed_stats ? JSON.parse(k.seed_stats) : {}) as KolSeed }))
     .filter((k) => k.s.monthly)
     .sort((a, b) => b.s.monthly!.profit - a.s.monthly!.profit)
-    .slice(0, 10);
+    .slice(0, 13);
   const maxPnl = Math.max(...board.map((k) => k.s.monthly!.profit), 1);
   const kolCount = kols.length;
 
@@ -160,7 +160,7 @@ export default async function Home() {
               Build a trader basket →
             </Link>
           </div>
-          <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+          <div className="grid items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
             <div className="card overflow-x-auto">
               <table className="w-full min-w-[640px] text-[13px]">
                 <thead>

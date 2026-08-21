@@ -160,17 +160,46 @@ export async function investInBasket(
   if (!basket || (!basket.is_public && basket.owner_id !== userId)) {
     throw new InvestError("Basket not found");
   }
-  if (basket.kind !== "coin") {
-    throw new InvestError(
-      "Trader baskets are tracking-only for now — copy-trade execution is coming"
-    );
-  }
   if (!Number.isFinite(amountSol) || amountSol < MIN_INVEST_SOL) {
     throw new InvestError(`Minimum investment is ${MIN_INVEST_SOL} SOL`);
   }
 
-  const tokens = getBasketTokens(basketId);
-  if (tokens.length === 0) throw new InvestError("Basket has no tokens");
+  // A coin basket has fixed weights. A TRADER basket mirrors what its member
+  // wallets actually hold right now — that is the copy-trade: your own wallet
+  // buys the squad's live portfolio, weighted, with nothing pooled.
+  let tokens: { mint: string; symbol: string; weight: number; decimals: number }[];
+  // Coin baskets deploy the full amount. A trader basket deploys only the
+  // share the squad itself has in positions — see deployPct.
+  let deployPct = 1;
+  if (basket.kind === "coin") {
+    tokens = getBasketTokens(basketId);
+    if (tokens.length === 0) throw new InvestError("Basket has no tokens");
+  } else {
+    const { getSquadPortfolio, squadIsMirrorable } = await import("./squad");
+    const squad = await getSquadPortfolio(basketId);
+    const check = squadIsMirrorable(squad);
+    if (!check.ok) throw new InvestError(check.reason ?? "This squad can't be mirrored right now");
+    deployPct = squad.deployPct;
+    tokens = squad.legs.map((l) => ({
+      mint: l.mint,
+      symbol: l.symbol,
+      weight: l.weight,
+      decimals: l.decimals,
+    }));
+    // Mirrored legs may be tokens we have never stored — record them so
+    // valuation, redeem and the UI can name them later.
+    for (const l of squad.legs) {
+      db.prepare(
+        "INSERT OR IGNORE INTO token_meta (mint, symbol, name, icon, decimals, coingecko_id, tracked) VALUES (?, ?, ?, ?, ?, NULL, 0)"
+      ).run(
+        l.mint,
+        l.symbol,
+        l.symbol,
+        `https://dd.dexscreener.com/ds-data/tokens/solana/${l.mint}.png?size=lg`,
+        l.decimals
+      );
+    }
+  }
 
   const { getAccountWallet, getSolBalance, signSendConfirmOne, WITHDRAW_RESERVE_LAMPORTS } =
     await import("./accounts");
@@ -189,9 +218,18 @@ export async function investInBasket(
 
   const { quoteBasketLegs, buildSwapTransactions } = await import("./swap");
   const { solPriceUsd } = await import("./treasury");
+  // Mirroring a squad means mirroring their CASH too: if they hold 60% in
+  // positions, only 60% of this deposit buys tokens and the rest stays as SOL
+  // in the user's wallet, ready for when the squad re-enters.
+  const deployLamports = Math.floor(lamports * deployPct);
+  if (deployLamports < 10_000_000) {
+    throw new InvestError(
+      "After matching the squad's cash allocation this order is too small to route — invest more, or wait until they are more heavily positioned."
+    );
+  }
   const legs = await quoteBasketLegs(
     tokens.map((t) => ({ mint: t.mint, symbol: t.symbol, weight: t.weight })),
-    lamports,
+    deployLamports,
     100
   );
   const sol = (await solPriceUsd()) ?? 0;
@@ -309,9 +347,6 @@ export async function redeemFromBasket(
   const db = getDb();
   const basket = getBasket(basketId);
   if (!basket) throw new InvestError("Basket not found");
-  if (basket.kind !== "coin") {
-    throw new InvestError("Trader baskets are tracking-only — there is nothing to redeem");
-  }
   if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
     throw new InvestError("Fraction must be between 0 and 1");
   }

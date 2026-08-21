@@ -67,10 +67,10 @@ export default async function BasketsPage() {
       <section>
         <h2 className="mb-1 text-lg font-semibold tracking-tight">Trader baskets</h2>
         <p className="mb-4 text-sm text-ink3">
-          Squads of real KOL wallets, tracked live on-chain.{" "}
-          <span className="chip chip-gold">TRACKING ONLY</span>{" "}
+          Squads of real KOL wallets, mirrored on-chain.{" "}
+          <span className="chip chip-on">COPY-TRADE</span>{" "}
           <span className="text-ink2">
-            NAV follows each wallet&apos;s real value — copy-trade execution is coming.
+            Investing buys what the squad currently holds, weighted — into your own wallet.
           </span>
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

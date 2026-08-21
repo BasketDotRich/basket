@@ -48,7 +48,7 @@ const TOC = [
   ["what-it-is", "What Basket actually is"],
   ["getting-started", "Getting started in 3 steps"],
   ["baskets", "Coin baskets"],
-  ["traders", "Trader baskets (tracking)"],
+  ["traders", "Trader baskets (copy-trading)"],
   ["exit-rules", "Exit rules"],
   ["fees", "Fees, in full"],
   ["custody", "Your wallet & keys"],
@@ -151,17 +151,25 @@ export default function DocsPage() {
           </p>
         </Section>
 
-        <Section id="traders" eyebrow="TRADER BASKETS" title="Trader baskets (tracking for now)">
+        <Section id="traders" eyebrow="TRADER BASKETS" title="Trader baskets (copy-trading)">
           <p>
             Basket tracks <strong className="text-ink">563 real KOL wallets</strong>, publicly
             attributed via Kolscan. A trader basket groups several of them and follows their combined
             on-chain value as a NAV — real balances, real tokens, updated from the chain.
           </p>
-          <p className="rounded-lg border border-gold/30 bg-gold/5 p-3 text-[12.5px]">
-            <strong className="text-gold">These are tracking-only today.</strong> You can watch what
-            these wallets hold and how they perform, but you cannot yet invest in one — copy-trade
-            execution (mirroring their entries with your SOL) is the next thing being built. The app
-            will not let you buy one, and nothing about their performance is simulated.
+          <p>
+            <strong className="text-ink">Investing in one mirrors the squad.</strong> Your own wallet
+            buys what those wallets currently hold, weighted by member and by position size. You
+            hold the tokens directly — nothing is pooled into a fund, and there are no units to
+            redeem. As the squad rotates, so does what a new investment buys.
+          </p>
+          <p className="rounded-lg border border-hairline bg-card2 p-3 text-[12.5px] leading-relaxed">
+            <strong className="text-ink">Two honest limits.</strong> First, positions are read from
+            wallet snapshots taken every few minutes, so a mirror can lag a KOL&apos;s entry — on a
+            fast memecoin that lag is material, and it is shown on the basket rather than hidden.
+            Second, mirroring copies their <em>cash</em> too: if the squad is 60% in SOL, only 60%
+            of your deposit buys tokens. If they are almost entirely in cash, the app refuses the
+            trade instead of putting your whole deposit into the sliver they still hold.
           </p>
         </Section>
 
