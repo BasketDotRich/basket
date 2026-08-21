@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getUser } from "@/lib/auth";
-import { getPrices } from "@/lib/prices";
+import { getMarketStats, getPrices } from "@/lib/prices";
 import {
   getTraderBasketNavLive,
   getTraderReturn,
@@ -50,7 +50,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
   if (basket.kind === "coin") {
     const tokens = getBasketTokens(basketId);
-    const prices = await getPrices(tokens.map((t) => t.mint));
+    const [prices, mktStats] = await Promise.all([
+      getPrices(tokens.map((t) => t.mint)),
+      getMarketStats(tokens.map((t) => t.mint)),
+    ]);
     const myHoldings = user
       ? (db
           .prepare("SELECT mint, qty, cost FROM holdings WHERE user_id = ? AND basket_id = ? AND qty > 0")
@@ -65,16 +68,36 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       const value = h && p ? h.qty * p.usdPrice : 0;
       myValue += value;
       myCost += h?.cost ?? 0;
+      const st = mktStats[t.mint];
       return {
         ...t,
         price: p?.usdPrice ?? null,
         change24h: p?.priceChange24h ?? null,
+        mcap: st?.mcap ?? null,
+        volume24h: st?.volume24h ?? null,
+        liquidity: st?.liquidity ?? null,
         myQty: h?.qty ?? 0,
         myValue: value,
       };
     });
+
+    // Basket-level rollup. Liquidity is the one that decides whether you can
+    // actually GET OUT, so it is reported as the thinnest leg (the true
+    // bottleneck) rather than a flattering sum, alongside the total.
+    const liqs = tokenRows.map((t) => t.liquidity).filter((v): v is number => v != null && v > 0);
+    const stats = {
+      mcap: tokenRows.reduce((s, t) => s + (t.mcap ?? 0), 0) || null,
+      volume24h: tokenRows.reduce((s, t) => s + (t.volume24h ?? 0), 0) || null,
+      liquidity: liqs.length ? liqs.reduce((s, v) => s + v, 0) : null,
+      thinnestLeg:
+        liqs.length === tokenRows.length && liqs.length > 0
+          ? tokenRows.reduce((lo, t) => ((t.liquidity ?? Infinity) < (lo.liquidity ?? Infinity) ? t : lo))
+          : null,
+      coverage: tokenRows.length ? liqs.length / tokenRows.length : 0,
+    };
+
     return NextResponse.json({
-      basket: { ...base, tokens: tokenRows, myValue, myCost },
+      basket: { ...base, tokens: tokenRows, myValue, myCost, stats },
     });
   }
 

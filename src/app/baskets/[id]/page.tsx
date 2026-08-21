@@ -59,6 +59,13 @@ type BasketDetail = {
   nav?: number;
   myValue: number;
   myCost: number;
+  stats?: {
+    mcap: number | null;
+    volume24h: number | null;
+    liquidity: number | null;
+    thinnestLeg: { symbol: string; liquidity: number | null } | null;
+    coverage: number;
+  } | null;
 };
 
 export default function BasketPage({ params }: { params: Promise<{ id: string }> }) {
@@ -415,6 +422,39 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
               )}
             </>
           )}
+          {basket.kind === "coin" && basket.stats && (
+            <div className="card p-4">
+              <div className="th mb-3">Basket liquidity &amp; size</div>
+              <dl className="space-y-2.5">
+                {[
+                  ["Combined market cap", basket.stats.mcap],
+                  ["24h volume", basket.stats.volume24h],
+                  ["Pooled liquidity", basket.stats.liquidity],
+                ].map(([label, v]) => (
+                  <div key={String(label)} className="flex items-baseline justify-between gap-3">
+                    <dt className="text-[12px] text-ink3">{label}</dt>
+                    <dd className="num text-[13px] font-medium">
+                      {typeof v === "number" ? fmtUsd(v, { compact: true }) : "—"}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              {basket.stats.thinnestLeg?.liquidity != null && (
+                <p className="mt-3 border-t border-hairline pt-3 text-[11px] leading-relaxed text-ink3">
+                  Thinnest leg is{" "}
+                  <strong className="text-ink2">{basket.stats.thinnestLeg.symbol}</strong> at{" "}
+                  <span className="num">{fmtUsd(basket.stats.thinnestLeg.liquidity, { compact: true })}</span> —
+                  that one sets how much you can exit without moving the price.
+                </p>
+              )}
+              {basket.stats.coverage < 1 && (
+                <p className="mt-2 text-[11px] text-warn">
+                  Liquidity data covers {Math.round(basket.stats.coverage * 100)}% of the basket.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="card p-5 text-xs leading-relaxed text-ink3">
             {basket.kind === "coin" ? (
               <>Investing executes real Jupiter swaps from your account wallet into every token, weighted like the basket. Redeeming swaps the position back to SOL in your wallet.</>
