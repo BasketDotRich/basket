@@ -26,4 +26,13 @@ export function register() {
   });
 
   console.log("[instrumentation] crash guards installed");
+
+  // Start the background engines AT BOOT, not on first page view. They used
+  // to start lazily from getPortfolio/invest, which meant a container that
+  // restarted overnight ran no exit-rule checks, no mirror syncs and no
+  // treasury cycles until a human happened to load a page — a stop-loss that
+  // fires only when someone is watching is not a stop-loss.
+  import("./src/lib/portfolio")
+    .then((m) => m.ensureRulesEngine())
+    .catch((e) => console.error("[instrumentation] engine start failed:", e));
 }
