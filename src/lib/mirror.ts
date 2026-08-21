@@ -54,27 +54,39 @@ export function setAllocation(userId: number, basketId: number, lamports: number
  * only the difference, so running it twice is harmless and a missed webhook
  * just means the next run catches up.
  */
+/**
+ * Non-blocking (user, basket) mutex, shared by the mirror engine AND by
+ * invest/redeem. It has to be shared: invest writes the full pledge before it
+ * buys anything, so a sync landing in that window sees "full allocation, zero
+ * holdings" and deploys the same money a second time.
+ */
+export async function withMirrorLock<T>(
+  userId: number,
+  basketId: number,
+  fn: () => Promise<T>,
+  onBusy: () => T
+): Promise<T> {
+  const lockKey = `${userId}:${basketId}`;
+  const locks = (globalThis.__bMirrorLocks ??= new Set<string>());
+  if (locks.has(lockKey)) return onBusy();
+  locks.add(lockKey);
+  try {
+    return await fn();
+  } finally {
+    locks.delete(lockKey);
+  }
+}
+
 export async function syncSquadMirror(
   userId: number,
   basketId: number
 ): Promise<MirrorResult> {
-  // ONE sync per (user, basket) at a time. The 60s tick and the Helius
-  // webhook both call this, and they can fire in the same instant — a KOL
-  // trade arriving mid-tick is the normal case, not an edge case. Without
-  // this, two runs compute the same drift from the same starting state and
-  // BOTH execute it: the position is bought twice and the allocation is
-  // silently exceeded.
-  const lockKey = `${userId}:${basketId}`;
-  const locks = (globalThis.__bMirrorLocks ??= new Set<string>());
-  if (locks.has(lockKey)) {
-    return { basketId, deployed: 0, idle: 0, buys: 0, sells: 0, skipped: "sync already running" };
-  }
-  locks.add(lockKey);
-  try {
-    return await syncSquadMirrorInner(userId, basketId);
-  } finally {
-    locks.delete(lockKey);
-  }
+  return withMirrorLock(
+    userId,
+    basketId,
+    () => syncSquadMirrorInner(userId, basketId),
+    () => ({ basketId, deployed: 0, idle: 0, buys: 0, sells: 0, skipped: "sync already running" })
+  );
 }
 
 declare global {
@@ -120,11 +132,23 @@ async function syncSquadMirrorInner(
   const sol = solPrice > 0 ? solPrice : ((await solPriceUsd()) ?? 0);
   if (sol <= 0) return { ...base, skipped: "no SOL price" };
 
+  // A leg we cannot price is NOT a leg we do not own. Skipping it here made it
+  // read as have=0, so the engine "topped up" a position it already held —
+  // every tick, without bound, until the wallet was empty. Any unpriceable
+  // holding now aborts the whole sync: we cannot compute correct targets
+  // without knowing what we already have.
   const actualByMint = new Map<string, number>();
+  const unpriced: string[] = [];
   for (const r of rows) {
     const px = prices[r.mint]?.usdPrice;
-    if (px == null || px <= 0) continue; // unpriceable leg: leave it alone
+    if (px == null || px <= 0) {
+      unpriced.push(r.mint);
+      continue;
+    }
     actualByMint.set(r.mint, Math.floor(((r.qty * px) / sol) * LAMPORTS_PER_SOL));
+  }
+  if (unpriced.length > 0) {
+    return { ...base, skipped: `holding ${unpriced.length} unpriceable leg(s) — cannot value the position` };
   }
 
   const buys: { mint: string; symbol: string; lamports: number }[] = [];
@@ -193,12 +217,16 @@ async function syncSquadMirrorInner(
         150
       );
       if (legs.length === 0) continue;
+      // Resolve decimals BEFORE trading. A mirrored token may be one we have
+      // never stored; defaulting to 6 corrupts the recorded quantity by
+      // 10^(d-6), and a missing token_meta row makes the position invisible in
+      // the portfolio and unsellable on redeem (both JOIN token_meta).
+      const decimals = await ensureTokenMeta(db, buy.mint, buy.symbol);
+      if (decimals == null) continue; // cannot record it correctly — do not buy it
+
       const [tx] = await buildSwapTransactions(legs, wallet.address);
       const sig = await signSendConfirmOne(userId, tx);
-      const meta = db
-        .prepare("SELECT decimals FROM token_meta WHERE mint = ?")
-        .get(buy.mint) as { decimals: number } | undefined;
-      const qty = Number(legs[0].outAmount) / 10 ** (meta?.decimals ?? 6);
+      const qty = Number(legs[0].outAmount) / 10 ** decimals;
       const costUsd = (legs[0].lamportsIn / LAMPORTS_PER_SOL) * sol;
       addLedgerPosition(db, userId, basketId, buy.mint, qty, costUsd);
       recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} · ${sig}`);
@@ -217,6 +245,44 @@ async function syncSquadMirrorInner(
     sells: sold,
     skipped: null,
   };
+}
+
+/**
+ * Make sure a mirrored mint exists in token_meta, returning its real decimals.
+ * Returns null when the token cannot be resolved — the caller must then skip
+ * it rather than record a position it cannot value or sell.
+ */
+async function ensureTokenMeta(
+  db: ReturnType<typeof getDb>,
+  mint: string,
+  symbol: string
+): Promise<number | null> {
+  const existing = db
+    .prepare("SELECT decimals FROM token_meta WHERE mint = ?")
+    .get(mint) as { decimals: number } | undefined;
+  if (existing) return existing.decimals;
+  try {
+    const res = await fetch(
+      `https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mint)}`,
+      { signal: AbortSignal.timeout(10_000), cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    const list = (await res.json()) as Array<{ id: string; symbol?: string; name?: string; decimals?: number }>;
+    const t = list?.find((x) => x.id === mint);
+    if (!t || t.decimals == null) return null;
+    db.prepare(
+      "INSERT OR IGNORE INTO token_meta (mint, symbol, name, icon, decimals, coingecko_id, tracked) VALUES (?, ?, ?, ?, ?, NULL, 0)"
+    ).run(
+      mint,
+      (t.symbol ?? symbol).trim(),
+      (t.name ?? symbol).trim(),
+      `https://dd.dexscreener.com/ds-data/tokens/solana/${mint}.png?size=lg`,
+      t.decimals
+    );
+    return t.decimals;
+  } catch {
+    return null;
+  }
 }
 
 /** Scale one ledger leg by (1 + delta); delta -1 removes it entirely. */

@@ -176,3 +176,22 @@ export async function signAndSendForAccount(
 }
 
 export { verifySignature };
+
+/**
+ * Raw SPL token balance of a wallet, as a bigint in the mint's base units.
+ * Used by the burn engine to transfer what it ACTUALLY received rather than
+ * what a swap was quoted — slippage means those are almost never the same,
+ * and over-transferring makes the whole burn fail.
+ */
+export async function getTokenBalanceRaw(owner: string, mint: string): Promise<bigint> {
+  const r = await rpc<{ value: Array<{ account: { data: { parsed: { info: { tokenAmount: { amount: string } } } } } }> }>(
+    "getTokenAccountsByOwner",
+    [owner, { mint }, { encoding: "jsonParsed", commitment: "confirmed" }]
+  );
+  let total = BigInt(0);
+  for (const acc of r?.value ?? []) {
+    const amt = acc?.account?.data?.parsed?.info?.tokenAmount?.amount;
+    if (amt) total += BigInt(amt);
+  }
+  return total;
+}

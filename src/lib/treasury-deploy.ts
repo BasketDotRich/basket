@@ -55,12 +55,15 @@ export function getTreasuryAccount(): TreasuryAccount {
     const orphaned = db
       .prepare("SELECT COUNT(*) AS n FROM holdings WHERE user_id = ?")
       .get(row.id) as { n: number };
+    // Do NOT delete blindly: if the operator swept the tokens into the new
+    // wallet, the positions are real and deleting them destroys the record of
+    // assets we still hold. getPortfolio reconciles against the chain anyway,
+    // so leaving them is self-correcting; wiping them is not reversible.
     if (row.wallet_address && orphaned.n > 0) {
-      db.prepare("DELETE FROM holdings WHERE user_id = ?").run(row.id);
       recordLedger({
         kind: "deploy",
         amountUsd: 0,
-        detail: `Treasury wallet rotated — ${orphaned.n} position(s) left behind in ${row.wallet_address.slice(0, 8)}…; sweep that wallet manually`,
+        detail: `Treasury wallet rotated — ${orphaned.n} position(s) were bought by ${row.wallet_address.slice(0, 8)}…; sweep that wallet or they will reconcile away`,
       });
     }
     db.prepare("UPDATE users SET wallet_address = ?, wallet_key = ? WHERE id = ?").run(

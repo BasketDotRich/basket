@@ -154,6 +154,32 @@ export async function investInBasket(
   basketId: number,
   amountSol: number
 ): Promise<{ signatures: string[]; allocatedOnly?: boolean }> {
+  // Squad investing must hold the SAME lock the mirror engine uses. The pledge
+  // is written before any routing, so without this a sync landing in that
+  // window sees the full allocation against zero holdings and deploys the
+  // money a second time. Fail loudly rather than silently taking a deposit.
+  const b = getBasket(basketId);
+  if (b && b.kind !== "coin") {
+    const { withMirrorLock } = await import("./mirror");
+    return withMirrorLock(
+      userId,
+      basketId,
+      () => investInBasketInner(userId, basketId, amountSol),
+      () => {
+        throw new InvestError(
+          "A copy-trade sync is running for this squad — try again in a few seconds."
+        );
+      }
+    );
+  }
+  return investInBasketInner(userId, basketId, amountSol);
+}
+
+async function investInBasketInner(
+  userId: number,
+  basketId: number,
+  amountSol: number
+): Promise<{ signatures: string[]; allocatedOnly?: boolean }> {
   ensureRulesEngine();
   const db = getDb();
   const basket = getBasket(basketId);
@@ -380,6 +406,33 @@ export class UnpricedLegsError extends InvestError {
 }
 
 export async function redeemFromBasket(
+  userId: number,
+  basketId: number,
+  fraction: number,
+  note?: string,
+  opts: { allowUnpriced?: boolean } = {}
+): Promise<number> {
+  // Same race in reverse: holdings are sold leg by leg while the pledge stays
+  // full, so a sync landing mid-redeem reads "allocation intact, holdings
+  // gone" and buys the position straight back — into a firing stop-loss.
+  const rb = getBasket(basketId);
+  if (rb && rb.kind !== "coin") {
+    const { withMirrorLock } = await import("./mirror");
+    return withMirrorLock(
+      userId,
+      basketId,
+      () => redeemFromBasketInner(userId, basketId, fraction, note, opts),
+      () => {
+        throw new InvestError(
+          "A copy-trade sync is running for this squad — try again in a few seconds."
+        );
+      }
+    );
+  }
+  return redeemFromBasketInner(userId, basketId, fraction, note, opts);
+}
+
+async function redeemFromBasketInner(
   userId: number,
   basketId: number,
   fraction: number,
@@ -883,7 +936,25 @@ export async function getPortfolio(userId: number): Promise<{
     const { getAccountHoldings } = await import("./trading");
     const live = await getAccountHoldings(userId);
     const onChain = new Map(live.tokens.map((t) => [t.mint, Number(t.rawAmount)]));
-    const stale = coinRows.filter((r) => (onChain.get(r.mint) ?? 0) <= 0);
+    // GRACE PERIOD. The balances indexer lags a confirmed swap by seconds, so
+    // a position bought moments ago legitimately reads as absent on-chain.
+    // Deleting it here would erase a real holding the user just paid for.
+    const recent = new Set(
+      (
+        db
+          .prepare(
+            `SELECT DISTINCT detail FROM transactions
+             WHERE user_id = ? AND created_at > ? AND type IN ('invest','trade')`
+          )
+          .all(userId, Date.now() - 180_000) as { detail: string }[]
+      ).flatMap((t) => {
+        const m = t.detail.match(/(?:Bought|Mirror buy)\s+(\S+)/);
+        return m ? [m[1]] : [];
+      })
+    );
+    const stale = coinRows.filter(
+      (r) => (onChain.get(r.mint) ?? 0) <= 0 && !recent.has(r.symbol)
+    );
     if (stale.length > 0) {
       db.exec("BEGIN");
       try {

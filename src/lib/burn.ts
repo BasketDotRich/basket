@@ -109,18 +109,26 @@ export async function runBurnCycle(): Promise<BurnResult> {
     if (legs.length === 0) return { ...NONE, skipped: "no route to buy BASKET" };
     const [buyTx] = await buildSwapTransactions(legs, operator);
     const buySig = await signSendConfirmOneWith(operatorKey, buyTx);
-    const tokens = Number(legs[0].outAmount) / 1e6;
+
 
     // 3. Send them where they can never come back from.
+    //
+    // Transfer the ACTUAL on-chain balance, not the quoted outAmount. Slippage
+    // means the swap almost never returns exactly what was quoted, and asking
+    // to move more than we hold makes every single burn fail.
+    const { getTokenBalanceRaw } = await import("./accounts");
+    const held = await getTokenBalanceRaw(operator, BASKET_MINT);
+    if (held <= BigInt(0)) return { ...NONE, skipped: "buy landed but no balance to burn" };
     const { buildTokenTransfer } = await import("./swap");
     const burnTx = await buildTokenTransfer(
       operator,
       BURN_ADDRESS,
       BASKET_MINT,
-      legs[0].outAmount
+      held.toString()
     );
     const burnSig = await signSendConfirmOneWith(operatorKey, burnTx);
 
+    const tokens = Number(held) / 1e6;
     const usdBurned = (spendable / LAMPORTS_PER_SOL) * sol;
     recordLedger({
       kind: "burn",
