@@ -116,15 +116,125 @@ export async function syncSquadMirror(
     }
   }
 
+  // ---- EXECUTE ----
+  // Sells first: they free SOL that the buys may need, and reducing exposure
+  // is the safer half to complete if the process dies partway through.
+  const { getAccountWallet, getSolBalance, signSendConfirmOne, WITHDRAW_RESERVE_LAMPORTS } =
+    await import("./accounts");
+  const wallet = getAccountWallet(userId);
+  if (!wallet) return { ...base, skipped: "no wallet" };
+
+  const { quoteExitLegs, quoteBasketLegs, buildSwapTransactions } = await import("./swap");
+  let sold = 0;
+  let bought = 0;
+
+  for (const sell of sells) {
+    try {
+      const row = rows.find((r) => r.mint === sell.mint);
+      if (!row) continue;
+      const meta = db
+        .prepare("SELECT symbol, decimals FROM token_meta WHERE mint = ?")
+        .get(sell.mint) as { symbol: string; decimals: number } | undefined;
+      const decimals = meta?.decimals ?? 6;
+      const rawAmount = BigInt(Math.floor(row.qty * sell.fraction * 10 ** decimals));
+      if (rawAmount <= BigInt(0)) continue;
+      const quoted = await quoteExitLegs(
+        [{ mint: sell.mint, symbol: meta?.symbol ?? "", rawAmount: rawAmount.toString() }],
+        150
+      );
+      if (quoted.length === 0) continue; // unrouteable leg — leave it, try next tick
+      const [tx] = await buildSwapTransactions(quoted, wallet.address);
+      const sig = await signSendConfirmOne(userId, tx);
+      applyLedgerDelta(db, userId, basketId, sell.mint, -sell.fraction, 0);
+      recordMirrorTrade(db, userId, basketId, `Mirror sell ${meta?.symbol ?? sell.mint.slice(0, 6)} · ${sig}`);
+      sold++;
+    } catch {
+      // one leg failing must not stop the rest of the rebalance
+    }
+  }
+
+  for (const buy of buys) {
+    try {
+      // Never spend past the allocation, and always leave network-fee headroom.
+      const balance = await getSolBalance(wallet.address);
+      const spendable = Math.min(buy.lamports, balance - WITHDRAW_RESERVE_LAMPORTS);
+      if (spendable < MIN_TRADE_LAMPORTS) continue;
+      const legs = await quoteBasketLegs(
+        [{ mint: buy.mint, symbol: buy.symbol, weight: 1 }],
+        spendable,
+        150
+      );
+      if (legs.length === 0) continue;
+      const [tx] = await buildSwapTransactions(legs, wallet.address);
+      const sig = await signSendConfirmOne(userId, tx);
+      const meta = db
+        .prepare("SELECT decimals FROM token_meta WHERE mint = ?")
+        .get(buy.mint) as { decimals: number } | undefined;
+      const qty = Number(legs[0].outAmount) / 10 ** (meta?.decimals ?? 6);
+      const costUsd = (legs[0].lamportsIn / LAMPORTS_PER_SOL) * sol;
+      addLedgerPosition(db, userId, basketId, buy.mint, qty, costUsd);
+      recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} · ${sig}`);
+      bought++;
+    } catch {
+      // same: a failed leg is retried on the next sync, not fatal
+    }
+  }
+
   const deployedNow = [...actualByMint.values()].reduce((a, b) => a + b, 0);
   return {
     basketId,
     deployed: deployedNow,
     idle: Math.max(0, allocated - deployedNow),
-    buys: buys.length,
-    sells: sells.length,
+    buys: bought,
+    sells: sold,
     skipped: null,
   };
+}
+
+/** Scale one ledger leg by (1 + delta); delta -1 removes it entirely. */
+function applyLedgerDelta(
+  db: ReturnType<typeof getDb>,
+  userId: number,
+  basketId: number,
+  mint: string,
+  delta: number,
+  _unused: number
+): void {
+  const keep = 1 + delta;
+  if (keep <= 0.0001) {
+    db.prepare("DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?").run(
+      userId, basketId, mint
+    );
+    return;
+  }
+  db.prepare(
+    "UPDATE holdings SET qty = qty * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ? AND mint = ?"
+  ).run(keep, keep, userId, basketId, mint);
+}
+
+function addLedgerPosition(
+  db: ReturnType<typeof getDb>,
+  userId: number,
+  basketId: number,
+  mint: string,
+  qty: number,
+  cost: number
+): void {
+  db.prepare(
+    `INSERT INTO holdings (user_id, basket_id, mint, qty, cost) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, basket_id, mint) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost`
+  ).run(userId, basketId, mint, qty, cost);
+}
+
+function recordMirrorTrade(
+  db: ReturnType<typeof getDb>,
+  userId: number,
+  basketId: number,
+  detail: string
+): void {
+  db.prepare(
+    "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'trade', ?, 0, ?, ?)"
+  ).run(userId, basketId, detail, Date.now());
 }
 
 /** Every (user, basket) pair with a standing allocation — the sync work list. */

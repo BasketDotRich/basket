@@ -66,6 +66,29 @@ export async function POST(req: Request) {
     // next mirror reads fresh on-chain state instead of a stale snapshot.
     for (const w of touched) invalidateWallet(w);
 
+    // A tracked wallet just moved: re-mirror every allocation that follows a
+    // basket containing it. This is what makes copy-trading near-instant
+    // rather than waiting for the next sweep.
+    if (touched.size > 0) {
+      try {
+        const { activeAllocations, syncSquadMirror } = await import("@/lib/mirror");
+        const affected = db
+          .prepare(
+            `SELECT DISTINCT bt.basket_id FROM basket_traders bt
+             JOIN traders t ON t.id = bt.trader_id
+             WHERE t.wallet IN (${[...touched].map(() => "?").join(",")})`
+          )
+          .all(...touched) as { basket_id: number }[];
+        const ids = new Set(affected.map((a) => a.basket_id));
+        for (const a of activeAllocations()) {
+          if (!ids.has(a.basket_id)) continue;
+          syncSquadMirror(a.user_id, a.basket_id).catch(() => {});
+        }
+      } catch {
+        // mirroring is best-effort here; the 60s tick still catches it
+      }
+    }
+
     return NextResponse.json({ ok: true, trades: recorded, wallets: touched.size });
   } catch (e) {
     console.error("[helius webhook] failed", e);

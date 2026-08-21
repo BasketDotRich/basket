@@ -770,6 +770,17 @@ export function ensureRulesEngine(): void {
     globalThis.__bRulesBusy = true;
     try {
       await checkExitRules();
+      // Keep every standing squad allocation in step with what its wallets
+      // hold. Webhooks make this near-instant; this tick is the safety net
+      // that catches anything a missed delivery would otherwise strand.
+      const { activeAllocations, syncSquadMirror } = await import("./mirror");
+      for (const a of activeAllocations()) {
+        try {
+          await syncSquadMirror(a.user_id, a.basket_id);
+        } catch {
+          // one allocation failing must not stall the others
+        }
+      }
     } catch {
       // next tick retries
     } finally {

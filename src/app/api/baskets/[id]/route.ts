@@ -130,6 +130,60 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     })
   );
   const nav = await getTraderBasketNavLive(basketId);
+
+  // The squad's LIVE portfolio — what a mirror of this basket would hold right
+  // now, plus how much of it is cash. Without this the UI can only show member
+  // wallets, never the actual index you are buying into.
+  let squad: {
+    legs: { mint: string; symbol: string; weight: number }[];
+    deployPct: number;
+    cashPct: number;
+    covered: number;
+    members: number;
+    mirrorable: boolean;
+    reason: string | null;
+  } | null = null;
+  try {
+    const { getSquadPortfolio, squadIsMirrorable } = await import("@/lib/squad");
+    const p = await getSquadPortfolio(basketId);
+    const check = squadIsMirrorable(p);
+    squad = {
+      legs: p.legs.map((l) => ({ mint: l.mint, symbol: l.symbol, weight: l.weight })),
+      deployPct: p.deployPct,
+      cashPct: p.cashPct,
+      covered: p.covered,
+      members: p.members,
+      mirrorable: check.ok,
+      reason: check.reason ?? null,
+    };
+  } catch {
+    // squad view is additive — never fail the page over it
+  }
+
+  // A standing allocation, and how much of it is currently deployed.
+  let allocation: { pledgedSol: number; deployedSol: number; idleSol: number } | null = null;
+  if (user) {
+    try {
+      const { getAllocation } = await import("@/lib/mirror");
+      const pledged = getAllocation(user.id, basketId);
+      if (pledged > 0) {
+        const deployedUsd = (db
+          .prepare("SELECT COALESCE(SUM(cost),0) AS c FROM holdings WHERE user_id = ? AND basket_id = ?")
+          .get(user.id, basketId) as { c: number }).c;
+        const solPx = (await import("@/lib/treasury")).solPriceUsd;
+        const px = (await solPx()) ?? 0;
+        const deployedLamports = px > 0 ? (deployedUsd / px) * 1e9 : 0;
+        allocation = {
+          pledgedSol: pledged / 1e9,
+          deployedSol: deployedLamports / 1e9,
+          idleSol: Math.max(0, pledged - deployedLamports) / 1e9,
+        };
+      }
+    } catch {
+      /* additive */
+    }
+  }
+
   const mine = user
     ? (db
         .prepare("SELECT units, cost FROM trader_holdings WHERE user_id = ? AND basket_id = ?")
@@ -140,6 +194,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       ...base,
       traders,
       nav,
+      squad,
+      allocation,
       myUnits: mine?.units ?? 0,
       myValue: (mine?.units ?? 0) * nav,
       myCost: mine?.cost ?? 0,
