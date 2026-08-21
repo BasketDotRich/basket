@@ -7,8 +7,12 @@
 // user funds is not a money transmitter.
 //
 // Fees:
-//   • platformFeeBps on each swap → Jupiter routes it to our referral token
-//     account automatically (needs PLATFORM_FEE_ACCOUNT configured).
+//   • The platform swap fee is NOT taken through Jupiter. Jupiter charges its
+//     platform fee in the OUTPUT mint, which on a buy is the memecoin — that
+//     would need a referral token account per mint (67+ and growing), and any
+//     swap whose account was missing would simply fail. Instead the fee is
+//     skimmed in SOL by the caller (see lib/fees.ts): one currency, one
+//     destination, works for every token including ones listed minutes ago.
 //   • the 0.5 SOL basket-creation fee is a plain SOL transfer the user signs.
 import { SOL_MINT } from "./wallets";
 
@@ -57,9 +61,6 @@ export async function quoteBasketLegs(
       amount: String(lamportsIn),
       slippageBps: String(slippageBps),
     });
-    if (PLATFORM_FEE_BPS > 0 && process.env.PLATFORM_FEE_ACCOUNT) {
-      params.set("platformFeeBps", String(PLATFORM_FEE_BPS));
-    }
     const res = await fetch(`${JUP}/swap/v1/quote?${params}`, {
       headers: JUP_HEADERS,
       signal: AbortSignal.timeout(12_000),
@@ -95,9 +96,6 @@ export async function buildSwapTransactions(
       dynamicComputeUnitLimit: true,
       prioritizationFeeLamports: "auto",
     };
-    if (PLATFORM_FEE_BPS > 0 && process.env.PLATFORM_FEE_ACCOUNT) {
-      body.feeAccount = process.env.PLATFORM_FEE_ACCOUNT;
-    }
     const res = await fetch(`${JUP}/swap/v1/swap`, {
       method: "POST",
       headers: { "content-type": "application/json", ...JUP_HEADERS },
@@ -130,9 +128,6 @@ export async function quoteExitLegs(
       amount: h.rawAmount,
       slippageBps: String(slippageBps),
     });
-    if (PLATFORM_FEE_BPS > 0 && process.env.PLATFORM_FEE_ACCOUNT) {
-      params.set("platformFeeBps", String(PLATFORM_FEE_BPS));
-    }
     const res = await fetch(`${JUP}/swap/v1/quote?${params}`, {
       headers: JUP_HEADERS,
       signal: AbortSignal.timeout(12_000),

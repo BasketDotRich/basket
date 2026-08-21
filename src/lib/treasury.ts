@@ -19,7 +19,13 @@ import { SOL_MINT } from "./wallets";
 export const PERFORMANCE_FEE_BPS = 1000; // 10% of realised profit
 export const CREATION_FEE_SOL = 0.5;
 
-export type LedgerKind = "performance_fee" | "creation_fee" | "treasury_pnl" | "deploy" | "burn";
+export type LedgerKind =
+  | "performance_fee"
+  | "creation_fee"
+  | "swap_fee"
+  | "treasury_pnl"
+  | "deploy"
+  | "burn";
 
 export type LedgerRow = {
   id: number;

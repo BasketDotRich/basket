@@ -221,7 +221,14 @@ export async function investInBasket(
   // Mirroring a squad means mirroring their CASH too: if they hold 60% in
   // positions, only 60% of this deposit buys tokens and the rest stays as SOL
   // in the user's wallet, ready for when the squad re-enters.
-  const deployLamports = Math.floor(lamports * deployPct);
+  // Platform swap fee comes off the top, in SOL, before anything is routed.
+  // Taking it here (rather than through Jupiter) means it works for any token
+  // and is always denominated in what the user deposited.
+  const { collectSwapFee, swapFeeLamports } = await import("./fees");
+  const feeLamports = swapFeeLamports(lamports);
+  const investable = lamports - feeLamports;
+
+  const deployLamports = Math.floor(investable * deployPct);
   if (deployLamports < 10_000_000) {
     throw new InvestError(
       "After matching the squad's cash allocation this order is too small to route — invest more, or wait until they are more heavily positioned."
@@ -233,6 +240,13 @@ export async function investInBasket(
     100
   );
   const sol = (await solPriceUsd()) ?? 0;
+  await collectSwapFee({
+    userId,
+    basketId,
+    lamports,
+    side: "buy",
+    solPrice: sol,
+  });
   const decimalsOf = new Map(tokens.map((t) => [t.mint, t.decimals]));
   const signatures: string[] = [];
   let spentSol = 0;
@@ -465,6 +479,18 @@ export async function redeemFromBasket(
   }
 
   const proceeds = proceedsSol * sol;
+
+  // Swap fee on the way out too, taken from the SOL the sells produced.
+  if (proceedsSol > 0) {
+    const { collectSwapFee } = await import("./fees");
+    await collectSwapFee({
+      userId,
+      basketId,
+      lamports: Math.floor(proceedsSol * LAMPORTS_PER_SOL),
+      side: "sell",
+      solPrice: sol,
+    });
+  }
 
   // Performance fee LAST: 10% of realised profit, only on what actually sold
   // and only after those sales are committed. Settled as a real SOL transfer
