@@ -56,3 +56,10 @@ ck*.txt
 # Treasury wallet secrets — NEVER commit
 .treasury-wallets.backup.txt
 tw.json
+
+# local API test scratch
+exec.json
+r*.json
+resp.json
+page.html
+X-THREAD.md
