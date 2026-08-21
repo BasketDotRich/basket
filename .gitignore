@@ -52,3 +52,7 @@ ck*.txt
 .prod-encryption-key.backup.txt
 .telegram-webhook-secret.txt
 .helius-webhook-secret.txt
+
+# Treasury wallet secrets — NEVER commit
+.treasury-wallets.backup.txt
+tw.json
