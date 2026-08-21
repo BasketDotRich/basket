@@ -50,7 +50,40 @@ const mintHistoryCache = (globalThis.__mbMintHistoryCache ??= new Map());
 const statsCache = (globalThis.__mbStatsCache ??= new Map());
 const historyCache = (globalThis.__mbHistoryCache ??= new Map());
 
-const PRICE_TTL = 30_000;
+const PRICE_TTL = 60_000; // was 30s — halving the refetch rate halves the 429s
+
+/**
+ * Jupiter's free tier rate-limits by IP, and every page load wants prices for
+ * the whole universe. Firing those batches in parallel got us 429s across the
+ * board, which showed up as tokens with no price at all.
+ *
+ * So every Jupiter price call goes through one global queue, spaced apart, with
+ * a single backoff retry. Slower per request, but it actually returns data.
+ */
+const JUP_GAP_MS = 350;
+declare global {
+  // eslint-disable-next-line no-var
+  var __mbJupQueue: Promise<unknown> | undefined;
+}
+
+async function jupFetch(url: string): Promise<Response> {
+  const prev = globalThis.__mbJupQueue ?? Promise.resolve();
+  const run = prev.then(async () => {
+    let res = await fetch(url, { signal: AbortSignal.timeout(10_000), cache: "no-store" });
+    if (res.status === 429) {
+      // One polite retry. If it 429s again the caller falls back to cache.
+      await new Promise((r) => setTimeout(r, 1200));
+      res = await fetch(url, { signal: AbortSignal.timeout(10_000), cache: "no-store" });
+    }
+    return res;
+  });
+  // Keep the chain alive regardless of outcome, and space the next call.
+  globalThis.__mbJupQueue = run.then(
+    () => new Promise((r) => setTimeout(r, JUP_GAP_MS)),
+    () => new Promise((r) => setTimeout(r, JUP_GAP_MS))
+  );
+  return run;
+}
 const STATS_TTL = 120_000;
 const HISTORY_TTL = 30 * 60_000;
 
@@ -88,10 +121,7 @@ export async function getPrices(
           const flightKey = group.join(",");
           let flight = priceInFlight.get(flightKey);
           if (!flight) {
-            flight = fetch(`https://lite-api.jup.ag/price/v3?ids=${flightKey}`, {
-              signal: AbortSignal.timeout(10_000),
-              cache: "no-store",
-            })
+            flight = jupFetch(`https://lite-api.jup.ag/price/v3?ids=${flightKey}`)
               .then(async (res) => {
                 if (!res.ok) throw new Error(`jupiter ${res.status}`);
                 return (await res.json()) as Record<
