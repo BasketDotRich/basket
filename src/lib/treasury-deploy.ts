@@ -45,6 +45,24 @@ export function getTreasuryAccount(): TreasuryAccount {
 
   // Attach the treasury wallet once; afterwards this is a no-op.
   if (row.wallet_address !== dest) {
+    // ROTATION SAFETY. Positions in the ledger were bought by the PREVIOUS
+    // wallet and the tokens still live there — the new wallet does not hold
+    // them. Carrying those rows over would make the treasury value holdings
+    // it cannot sell, and harvest would try to sell tokens that are not there.
+    //
+    // Clear them and say so on the ledger. The old wallet's tokens are not
+    // lost: its key is in the backup file and it can be swept manually.
+    const orphaned = db
+      .prepare("SELECT COUNT(*) AS n FROM holdings WHERE user_id = ?")
+      .get(row.id) as { n: number };
+    if (row.wallet_address && orphaned.n > 0) {
+      db.prepare("DELETE FROM holdings WHERE user_id = ?").run(row.id);
+      recordLedger({
+        kind: "deploy",
+        amountUsd: 0,
+        detail: `Treasury wallet rotated — ${orphaned.n} position(s) left behind in ${row.wallet_address.slice(0, 8)}…; sweep that wallet manually`,
+      });
+    }
     db.prepare("UPDATE users SET wallet_address = ?, wallet_key = ? WHERE id = ?").run(
       dest,
       key,

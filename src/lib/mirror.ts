@@ -58,6 +58,34 @@ export async function syncSquadMirror(
   userId: number,
   basketId: number
 ): Promise<MirrorResult> {
+  // ONE sync per (user, basket) at a time. The 60s tick and the Helius
+  // webhook both call this, and they can fire in the same instant — a KOL
+  // trade arriving mid-tick is the normal case, not an edge case. Without
+  // this, two runs compute the same drift from the same starting state and
+  // BOTH execute it: the position is bought twice and the allocation is
+  // silently exceeded.
+  const lockKey = `${userId}:${basketId}`;
+  const locks = (globalThis.__bMirrorLocks ??= new Set<string>());
+  if (locks.has(lockKey)) {
+    return { basketId, deployed: 0, idle: 0, buys: 0, sells: 0, skipped: "sync already running" };
+  }
+  locks.add(lockKey);
+  try {
+    return await syncSquadMirrorInner(userId, basketId);
+  } finally {
+    locks.delete(lockKey);
+  }
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __bMirrorLocks: Set<string> | undefined;
+}
+
+async function syncSquadMirrorInner(
+  userId: number,
+  basketId: number
+): Promise<MirrorResult> {
   const db = getDb();
   const allocated = getAllocation(userId, basketId);
   const base: MirrorResult = { basketId, deployed: 0, idle: allocated, buys: 0, sells: 0, skipped: null };
