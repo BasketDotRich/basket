@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     // A tracked wallet just moved: re-mirror every allocation that follows a
     // basket containing it. This is what makes copy-trading near-instant
     // rather than waiting for the next sweep.
-    if (touched.size > 0) {
+    if (touched.size > 0 && process.env.MIRROR_ENGINE_ENABLED === "1") {
       try {
         const { activeAllocations, syncSquadMirror } = await import("@/lib/mirror");
         const affected = db

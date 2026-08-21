@@ -787,12 +787,22 @@ export function ensureRulesEngine(): void {
       // Keep every standing squad allocation in step with what its wallets
       // hold. Webhooks make this near-instant; this tick is the safety net
       // that catches anything a missed delivery would otherwise strand.
-      const { activeAllocations, syncSquadMirror } = await import("./mirror");
-      for (const a of activeAllocations()) {
-        try {
-          await syncSquadMirror(a.user_id, a.basket_id);
-        } catch {
-          // one allocation failing must not stall the others
+      // KILL SWITCH — the mirror engine is OFF by default.
+      //
+      // A preflight audit found defects that can spend without bound: an
+      // unpriced held leg reads as have=0, so the engine re-buys a position it
+      // already owns on every tick until the wallet is empty. It also races
+      // invest and redeem, which take no lock. None of this has ever run
+      // against a real allocation, so disabling costs nothing and leaving it
+      // on risks real money. Set MIRROR_ENGINE_ENABLED=1 once fixed.
+      if (process.env.MIRROR_ENGINE_ENABLED === "1") {
+        const { activeAllocations, syncSquadMirror } = await import("./mirror");
+        for (const a of activeAllocations()) {
+          try {
+            await syncSquadMirror(a.user_id, a.basket_id);
+          } catch {
+            // one allocation failing must not stall the others
+          }
         }
       }
 
@@ -800,7 +810,7 @@ export function ensureRulesEngine(): void {
       // deploying accumulated revenue, not chasing candles. Once every 30
       // ticks (~30 min) is plenty and keeps swap costs off the P&L.
       globalThis.__bTreasuryTick = (globalThis.__bTreasuryTick ?? 0) + 1;
-      if (globalThis.__bTreasuryTick % 30 === 0) {
+      if (globalThis.__bTreasuryTick % 30 === 0 && process.env.TREASURY_ENGINE_ENABLED === "1") {
         try {
           const { runTreasuryCycle } = await import("./treasury-deploy");
           await runTreasuryCycle();
