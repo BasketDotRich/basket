@@ -87,6 +87,18 @@ export async function withdrawSol(
   const signature = await conn.sendRawTransaction(tx.serialize(), { maxRetries: 3 });
   await conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
 
+  // A pledge you cannot fund is not a pledge — the same rule invest applies
+  // when the allocation is set. Withdrawing SOL out from under standing squad
+  // allocations must shrink them to what the wallet still holds, or the
+  // mirror engine sits on a phantom commitment and grabs the user's NEXT
+  // deposit within a tick, whatever that deposit was actually for.
+  try {
+    const { shrinkAllocationsToBalance } = await import("./mirror");
+    await shrinkAllocationsToBalance(userId, balance - lamports);
+  } catch (e) {
+    console.error("[withdraw] allocation shrink failed", e);
+  }
+
   // transactions.amount is a USD column everywhere else — record the USD value
   // of the withdrawal, with the SOL quantity in the detail text. 0 if the SOL
   // price is momentarily unavailable (detail still carries the truth).

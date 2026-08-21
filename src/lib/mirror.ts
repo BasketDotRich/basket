@@ -211,7 +211,11 @@ async function syncSquadMirrorInner(
       const [tx] = await buildSwapTransactions(quoted, wallet.address);
       const sig = await signSendConfirmOne(userId, tx);
       applyLedgerDelta(db, userId, basketId, sell.mint, -sell.fraction, 0);
-      recordMirrorTrade(db, userId, basketId, `Mirror sell ${meta?.symbol ?? sell.mint.slice(0, 6)} · ${sig}`);
+      recordMirrorTrade(
+        db, userId, basketId,
+        `Mirror sell ${meta?.symbol ?? sell.mint.slice(0, 6)} · ${sig}`,
+        (Number(quoted[0].outAmount) / LAMPORTS_PER_SOL) * sol
+      );
       sold++;
     } catch {
       // one leg failing must not stop the rest of the rebalance
@@ -259,7 +263,7 @@ async function syncSquadMirrorInner(
       const qty = Number(legs[0].outAmount) / 10 ** decimals;
       const costUsd = (legs[0].lamportsIn / LAMPORTS_PER_SOL) * sol;
       addLedgerPosition(db, userId, basketId, buy.mint, qty, costUsd);
-      recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} · ${sig}`);
+      recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} · ${sig}`, costUsd);
       bought++;
     } catch (e) {
       // If the swap CONFIRMED and something after it threw, the tokens are
@@ -277,7 +281,11 @@ async function syncSquadMirrorInner(
             const delta = Math.max(0, onChainQty - prior);
             if (delta > 0) {
               addLedgerPosition(db, userId, basketId, buy.mint, delta, (buy.lamports / LAMPORTS_PER_SOL) * sol);
-              recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} (recovered) · ${landedSig}`);
+              recordMirrorTrade(
+                db, userId, basketId,
+                `Mirror buy ${buy.symbol} (recovered) · ${landedSig}`,
+                (buy.lamports / LAMPORTS_PER_SOL) * sol
+              );
             }
           }
         } catch {
@@ -386,11 +394,76 @@ function recordMirrorTrade(
   db: ReturnType<typeof getDb>,
   userId: number,
   basketId: number,
-  detail: string
+  detail: string,
+  amountUsd = 0
 ): void {
+  // amount is the trade's USD size — activity feeds and history sort and sum
+  // on it, so recording 0 made every mirror trade look like a no-op.
   db.prepare(
-    "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'trade', ?, 0, ?, ?)"
-  ).run(userId, basketId, detail, Date.now());
+    "INSERT INTO transactions (user_id, type, basket_id, amount, detail, created_at) VALUES (?, 'trade', ?, ?, ?, ?)"
+  ).run(userId, basketId, amountUsd, detail, Date.now());
+}
+
+/**
+ * Shrink a user's standing squad pledges so their idle portion never exceeds
+ * what the wallet can actually fund. Called after a withdrawal: the invest
+ * path already enforces "a pledge you cannot fund is not a pledge" when the
+ * allocation is set, and money leaving the wallet must re-apply it —
+ * otherwise the engine holds a phantom claim that grabs the user's next
+ * deposit within a tick, whatever that deposit was for.
+ *
+ * The deployed part of each pledge (tokens already bought) is untouched; only
+ * the idle, still-in-cash part shrinks, proportionally across baskets.
+ */
+export async function shrinkAllocationsToBalance(
+  userId: number,
+  newBalanceLamports: number
+): Promise<void> {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT basket_id, allocated_lamports FROM trader_holdings WHERE user_id = ? AND allocated_lamports > 0"
+    )
+    .all(userId) as { basket_id: number; allocated_lamports: number }[];
+  if (rows.length === 0) return;
+
+  const { WITHDRAW_RESERVE_LAMPORTS } = await import("./accounts");
+  const { solPriceUsd } = await import("./treasury");
+  const { getPrices } = await import("./prices");
+
+  // Value what each basket has already deployed. Unpriced legs fall back to
+  // cost — a shrink pass must never value real tokens at zero.
+  const deployed = new Map<number, number>();
+  const held = db
+    .prepare("SELECT basket_id, mint, qty, cost FROM holdings WHERE user_id = ? AND qty > 0")
+    .all(userId) as { basket_id: number; mint: string; qty: number; cost: number }[];
+  if (held.length > 0) {
+    const sol = (await solPriceUsd()) ?? 0;
+    if (sol <= 0) return; // cannot value deployed legs — do not shrink blind
+    const prices = await getPrices([...new Set(held.map((h) => h.mint))]);
+    for (const h of held) {
+      const px = prices[h.mint]?.usdPrice;
+      const usd = px != null && px > 0 ? h.qty * px : h.cost;
+      deployed.set(
+        h.basket_id,
+        (deployed.get(h.basket_id) ?? 0) + Math.floor((usd / sol) * LAMPORTS_PER_SOL)
+      );
+    }
+  }
+
+  const fundable = Math.max(0, newBalanceLamports - WITHDRAW_RESERVE_LAMPORTS);
+  const idle = rows.map((r) => ({
+    ...r,
+    idle: Math.max(0, r.allocated_lamports - (deployed.get(r.basket_id) ?? 0)),
+  }));
+  const totalIdle = idle.reduce((a, b) => a + b.idle, 0);
+  if (totalIdle <= fundable) return; // every pledge is still fully funded
+
+  for (const r of idle) {
+    const share = totalIdle > 0 ? Math.floor((r.idle / totalIdle) * fundable) : 0;
+    const next = Math.max(0, (deployed.get(r.basket_id) ?? 0) + share);
+    if (next < r.allocated_lamports) setAllocation(userId, r.basket_id, next);
+  }
 }
 
 /** Every (user, basket) pair with a standing allocation — the sync work list. */
