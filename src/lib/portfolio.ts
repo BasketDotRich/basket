@@ -814,7 +814,7 @@ export async function getPortfolio(userId: number): Promise<{
   ensureRulesEngine();
   const db = getDb();
 
-  const coinRows = db
+  let coinRows = db
     .prepare(
       `SELECT h.basket_id, h.mint, h.qty, h.cost, tm.symbol, tm.name, tm.icon
        FROM holdings h JOIN token_meta tm ON tm.mint = h.mint
@@ -824,6 +824,37 @@ export async function getPortfolio(userId: number): Promise<{
     basket_id: number; mint: string; qty: number; cost: number;
     symbol: string; name: string; icon: string | null;
   }[];
+
+  // RECONCILE AGAINST THE CHAIN before valuing anything.
+  //
+  // The wallet is the source of truth: if the ledger says you hold a token
+  // that your wallet no longer has, the ledger is wrong — you sold it, moved
+  // it, or it was swapped elsewhere. Valuing a position that does not exist
+  // inflates the portfolio and, worse, leaves exit rules armed on nothing.
+  try {
+    const { getAccountHoldings } = await import("./trading");
+    const live = await getAccountHoldings(userId);
+    const onChain = new Map(live.tokens.map((t) => [t.mint, Number(t.rawAmount)]));
+    const stale = coinRows.filter((r) => (onChain.get(r.mint) ?? 0) <= 0);
+    if (stale.length > 0) {
+      db.exec("BEGIN");
+      try {
+        for (const r of stale) {
+          db.prepare(
+            "DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?"
+          ).run(userId, r.basket_id, r.mint);
+        }
+        db.exec("COMMIT");
+      } catch {
+        db.exec("ROLLBACK");
+      }
+      // drop them from this pass too, so the number shown is already correct
+      coinRows = coinRows.filter((r) => (onChain.get(r.mint) ?? 0) > 0);
+    }
+  } catch {
+    // Chain unreadable: value the ledger as-is rather than deleting positions
+    // on the strength of a failed RPC call. Wrongly-high beats wrongly-gone.
+  }
 
   const prices = await getPrices(coinRows.map((r) => r.mint));
   const byBasket = new Map<number, PositionToken[]>();

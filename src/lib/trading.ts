@@ -186,12 +186,51 @@ export async function sellTokenOnchain(
   const txs = await buildSwapTransactions(quoted, holdings.address);
   const signatures = await signAndSendForAccount(userId, txs);
 
+  // The tokens are gone from the wallet, so they must go from the basket
+  // ledger too. Without this a wallet-level sell leaves phantom positions:
+  // the portfolio keeps valuing coins you no longer own, and exit rules keep
+  // evaluating — and eventually "auto-selling" — a position that isn't there.
+  reduceLedgerHoldings(userId, mint, fraction);
+
   recordTrade(
     userId,
     held.valueUsd * fraction,
     `On-chain sell ${held.symbol} → SOL · ${signatures[0] ?? ""}`
   );
   return { signature: signatures[0], symbol: held.symbol };
+}
+
+/**
+ * Apply a wallet-level sell to every basket that recorded this mint.
+ *
+ * A token can be held by more than one basket, so the sale is spread across
+ * them proportionally — the same fraction comes off each, which keeps each
+ * basket's cost basis intact and stops one basket absorbing another's sale.
+ */
+function reduceLedgerHoldings(userId: number, mint: string, fraction: number): void {
+  const db = getDb();
+  const rows = db
+    .prepare("SELECT basket_id, qty FROM holdings WHERE user_id = ? AND mint = ? AND qty > 0")
+    .all(userId, mint) as { basket_id: number; qty: number }[];
+  if (rows.length === 0) return;
+
+  db.exec("BEGIN");
+  try {
+    for (const r of rows) {
+      if (fraction >= 0.9999) {
+        db.prepare("DELETE FROM holdings WHERE user_id = ? AND basket_id = ? AND mint = ?").run(
+          userId, r.basket_id, mint
+        );
+      } else {
+        db.prepare(
+          "UPDATE holdings SET qty = qty * ?, cost = cost * ? WHERE user_id = ? AND basket_id = ? AND mint = ?"
+        ).run(1 - fraction, 1 - fraction, userId, r.basket_id, mint);
+      }
+    }
+    db.exec("COMMIT");
+  } catch {
+    db.exec("ROLLBACK");
+  }
 }
 
 export { CustodyError };
