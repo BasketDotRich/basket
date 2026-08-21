@@ -153,7 +153,7 @@ export async function investInBasket(
   userId: number,
   basketId: number,
   amountSol: number
-): Promise<{ signatures: string[] }> {
+): Promise<{ signatures: string[]; allocatedOnly?: boolean }> {
   ensureRulesEngine();
   const db = getDb();
   const basket = getBasket(basketId);
@@ -216,6 +216,14 @@ export async function investInBasket(
     );
   }
 
+  // Funding a squad is a STANDING ALLOCATION. Record the pledge before any
+  // routing, so that even if they are wholly in cash right now the commitment
+  // is on the books and the mirror engine deploys it the moment they enter.
+  if (basket.kind !== "coin") {
+    const { getAllocation, setAllocation } = await import("./mirror");
+    setAllocation(userId, basketId, getAllocation(userId, basketId) + lamports);
+  }
+
   const { quoteBasketLegs, buildSwapTransactions } = await import("./swap");
   const { solPriceUsd } = await import("./treasury");
   // Mirroring a squad means mirroring their CASH too: if they hold 60% in
@@ -230,8 +238,16 @@ export async function investInBasket(
 
   const deployLamports = Math.floor(investable * deployPct);
   if (deployLamports < 10_000_000) {
+    // Nothing to deploy right now — either the squad is in cash or their
+    // positions are a sliver. Under the allocation model that is a normal
+    // resting state, not an error: the pledge is recorded and the engine
+    // enters when they do.
+    if (basket.kind !== "coin") {
+      await recordSnapshot(userId, true);
+      return { signatures: [], allocatedOnly: true };
+    }
     throw new InvestError(
-      "After matching the squad's cash allocation this order is too small to route — invest more, or wait until they are more heavily positioned."
+      "This order is too small to route across the basket — try a larger amount."
     );
   }
   const legs = await quoteBasketLegs(
@@ -473,6 +489,13 @@ export async function redeemFromBasket(
   }
 
   const soldEverything = !sellFailure;
+  if (soldEverything && basket.kind !== "coin") {
+    // Reduce the standing pledge by the same fraction, otherwise the mirror
+    // engine would treat the sale as drift and immediately buy it all back.
+    const { getAllocation, setAllocation } = await import("./mirror");
+    const current = getAllocation(userId, basketId);
+    setAllocation(userId, basketId, Math.floor(current * (1 - fraction)));
+  }
   if (soldEverything && fraction >= 0.9999) {
     // exit rules belong to the position, not the basket — retire them with it
     db.prepare("DELETE FROM position_rules WHERE user_id = ? AND basket_id = ?").run(userId, basketId);

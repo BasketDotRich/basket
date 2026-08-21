@@ -182,17 +182,9 @@ export function squadIsMirrorable(p: SquadPortfolio): { ok: boolean; reason?: st
       reason: `Only ${p.covered} of ${p.members} member wallets could be read. Mirroring a partial squad would weight it wrong.`,
     };
   }
-  if (p.legs.length === 0) {
-    return {
-      ok: false,
-      reason: "The squad is currently all in SOL/stables — there are no positions to mirror.",
-    };
-  }
-  if (p.deployPct < MIN_DEPLOY_PCT) {
-    return {
-      ok: false,
-      reason: `This squad is ${Math.round(p.cashPct * 100)}% in cash right now — mirroring would put your whole deposit into the sliver they still hold, a far bigger bet than they are making. Wait until they are back in positions.`,
-    };
-  }
+  // NOTE: a squad sitting in cash is NOT a reason to refuse. Under the
+  // allocation model your pledge simply stays as SOL until they re-enter —
+  // that is the strategy running, not a failure. Only genuine READ problems
+  // block a mirror, because those would make the weights wrong.
   return { ok: true };
 }

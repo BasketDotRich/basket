@@ -133,11 +133,17 @@ function createDb(): DatabaseSync {
       PRIMARY KEY (user_id, basket_id, mint)
     );
     -- trader-basket positions: units of the basket's NAV index
+    -- A squad allocation is a STANDING COMMITMENT, not a one-shot purchase.
+    -- allocated_lamports is how much SOL you have pledged to follow this squad
+    -- with; the mirror engine deploys and un-deploys it as they enter and exit.
+    -- You fund the strategy once and it runs — you do not have to time your
+    -- deposit to a moment when they happen to be holding something.
     CREATE TABLE IF NOT EXISTS trader_holdings (
       user_id INTEGER NOT NULL REFERENCES users(id),
       basket_id INTEGER NOT NULL REFERENCES baskets(id),
       units REAL NOT NULL DEFAULT 0,
       cost REAL NOT NULL DEFAULT 0,
+      allocated_lamports INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (user_id, basket_id)
     );
     CREATE TABLE IF NOT EXISTS transactions (
@@ -202,6 +208,13 @@ function createDb(): DatabaseSync {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_sent ON telegram_sent(chat_id, kind, dedupe_key);
   `);
+  // Additive migrations for databases created before a column existed.
+  // ALTER TABLE ADD COLUMN is safe and idempotent behind this check.
+  const cols = db.prepare("PRAGMA table_info(trader_holdings)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "allocated_lamports")) {
+    db.exec("ALTER TABLE trader_holdings ADD COLUMN allocated_lamports INTEGER NOT NULL DEFAULT 0");
+  }
+
   seed(db);
   return db;
 }

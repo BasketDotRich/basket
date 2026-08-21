@@ -123,7 +123,9 @@ export function InvestPanel({
         kind: "ok",
         text:
           tab === "invest"
-            ? `Bought on-chain with ${amount} SOL`
+            ? isSquad
+              ? `Allocated ${amount} SOL to this squad`
+              : `Bought on-chain with ${amount} SOL`
             : `Sold ${(fraction * 100).toFixed(0)}% back to SOL — ${fmtUsd(data.proceeds)}`,
         sigs: data.signatures,
       });
@@ -305,10 +307,11 @@ export function InvestPanel({
           <p className="text-[11px] leading-relaxed text-ink3">
             {isSquad ? (
               <>
-                Your wallet buys what these wallets hold right now, weighted by member and by
-                position size — and it mirrors their cash too, so if the squad is 60% in
-                positions only 60% of this goes in. The tokens land in your wallet; nothing is
-                pooled.
+                This funds a standing allocation to the squad. It follows them in when they
+                enter and back out to SOL when they exit — weighted by member and position
+                size. If they are in cash right now, yours waits as SOL until they move. You
+                are not timing an entry; you are funding the strategy. Tokens land in your own
+                wallet; nothing is pooled.
               </>
             ) : (
               <>
