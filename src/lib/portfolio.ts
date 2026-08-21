@@ -221,7 +221,19 @@ export async function investInBasket(
   // is on the books and the mirror engine deploys it the moment they enter.
   if (basket.kind !== "coin") {
     const { getAllocation, setAllocation } = await import("./mirror");
-    setAllocation(userId, basketId, getAllocation(userId, basketId) + lamports);
+    const existing = getAllocation(userId, basketId);
+    // A pledge you cannot fund is not a pledge. Cap the TOTAL standing
+    // allocation at what the wallet actually holds, minus fee headroom —
+    // otherwise repeated clicks (which look like nothing happened while the
+    // squad sits in cash) silently commit money that isn't there.
+    const ceiling = Math.max(0, balance - WITHDRAW_RESERVE_LAMPORTS);
+    const requested = existing + lamports;
+    if (existing >= ceiling) {
+      throw new InvestError(
+        `You already have ${(existing / LAMPORTS_PER_SOL).toFixed(3)} SOL allocated to this squad — that is your whole balance. Deposit more SOL to increase it.`
+      );
+    }
+    setAllocation(userId, basketId, Math.min(requested, ceiling));
   }
 
   const { quoteBasketLegs, buildSwapTransactions } = await import("./swap");

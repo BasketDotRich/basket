@@ -38,6 +38,35 @@ export default async function DashboardPage() {
   const { positions, totalValue, totalCost } = await getPortfolio(user.id);
   const snapshots = getSnapshots(user.id);
 
+  // Standing squad allocations. A commitment with nothing deployed yet is
+  // still a commitment — omitting it is why a funded account could read
+  // "No positions yet", which led to funding it again.
+  const solPx = (await solPriceUsd()) ?? 0;
+  const allocations = (
+    db
+      .prepare(
+        `SELECT th.basket_id, th.allocated_lamports, b.name
+         FROM trader_holdings th JOIN baskets b ON b.id = th.basket_id
+         WHERE th.user_id = ? AND th.allocated_lamports > 0`
+      )
+      .all(user.id) as { basket_id: number; allocated_lamports: number; name: string }[]
+  ).map((r) => {
+    const deployedUsd = (
+      db
+        .prepare("SELECT COALESCE(SUM(cost),0) AS c FROM holdings WHERE user_id = ? AND basket_id = ?")
+        .get(user.id, r.basket_id) as { c: number }
+    ).c;
+    const deployedSol = solPx > 0 ? deployedUsd / solPx : 0;
+    const pledgedSol = r.allocated_lamports / 1e9;
+    return {
+      basketId: r.basket_id,
+      name: r.name,
+      pledgedSol,
+      deployedSol,
+      idleSol: Math.max(0, pledgedSol - deployedSol),
+    };
+  });
+
   // real wallet SOL, straight from the chain
   let walletSol: number | null = null;
   let walletUsd: number | null = null;
@@ -125,14 +154,46 @@ export default async function DashboardPage() {
         </div>
       </div>
 
+      {allocations.length > 0 && (
+        <>
+          <h2 className="mb-1 mt-10 text-lg font-semibold">Following</h2>
+          <p className="mb-4 text-[13px] text-ink3">
+            Standing allocations to KOL squads. These follow the squad in and out automatically.
+          </p>
+          <div className="space-y-3">
+            {allocations.map((a) => (
+              <Link key={a.basketId} href={`/baskets/${a.basketId}`} className="card lift block p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold">{a.name}</span>
+                  <span className="num text-[15px]">
+                    {a.pledgedSol.toFixed(3)} <span className="text-[12px] text-ink3">SOL allocated</span>
+                  </span>
+                </div>
+                <div className="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-card3">
+                  <span
+                    className="block h-full bg-brand"
+                    style={{ width: `${Math.min(100, (a.deployedSol / Math.max(a.pledgedSol, 1e-9)) * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-1.5 flex justify-between text-[11.5px] text-ink3">
+                  <span><span className="num text-brand">{a.deployedSol.toFixed(3)}</span> deployed</span>
+                  <span><span className="num">{a.idleSol.toFixed(3)}</span> waiting as SOL</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+
       <h2 className="mb-4 mt-10 text-lg font-semibold">Your positions</h2>
       {positions.length === 0 ? (
         <div className="card p-10 text-center">
           <p className="text-ink2">
-            No positions yet —{" "}
-            {walletSol != null && walletSol > 0.015
-              ? `you have ${walletSol.toFixed(3)} SOL ready to deploy.`
-              : "deposit SOL to your wallet and buy your first basket."}
+            {allocations.length > 0
+              ? "No coin-basket positions — your squad allocations are shown above."
+              : walletSol != null && walletSol > 0.015
+                ? `No positions yet — you have ${walletSol.toFixed(3)} SOL ready to deploy.`
+                : "No positions yet — deposit SOL to your wallet and buy your first basket."}
           </p>
           <Link href="/baskets" className="btn-brand mt-4 inline-block rounded-xl px-5 py-2.5 text-sm">
             Find a basket

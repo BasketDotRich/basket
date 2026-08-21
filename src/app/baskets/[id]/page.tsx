@@ -57,6 +57,16 @@ type BasketDetail = {
   tokens?: TokenRow[];
   traders?: TraderRowT[];
   nav?: number;
+  allocation?: { pledgedSol: number; deployedSol: number; idleSol: number } | null;
+  squad?: {
+    legs: { mint: string; symbol: string; weight: number }[];
+    deployPct: number;
+    cashPct: number;
+    covered: number;
+    members: number;
+    mirrorable: boolean;
+    reason: string | null;
+  } | null;
   myValue: number;
   myCost: number;
   stats?: {
@@ -373,6 +383,42 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
               </p>
             </div>
           )}
+          {basket.allocation && basket.allocation.pledgedSol > 0 && (
+            <div className="card mb-3 p-4">
+              <div className="flex items-center justify-between">
+                <span className="th">YOUR ALLOCATION</span>
+                <span className="chip chip-on">FOLLOWING</span>
+              </div>
+              <div className="num mt-2 text-[26px] font-semibold">
+                {basket.allocation.pledgedSol.toFixed(3)} <span className="text-[15px] text-ink3">SOL</span>
+              </div>
+              <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-card3">
+                <span
+                  className="block h-full bg-brand"
+                  style={{
+                    width: `${Math.min(100, (basket.allocation.deployedSol / Math.max(basket.allocation.pledgedSol, 1e-9)) * 100)}%`,
+                  }}
+                />
+              </div>
+              <div className="mt-2 flex justify-between text-[11.5px]">
+                <span className="text-ink2">
+                  <span className="num text-brand">{basket.allocation.deployedSol.toFixed(3)}</span> deployed
+                </span>
+                <span className="text-ink3">
+                  <span className="num">{basket.allocation.idleSol.toFixed(3)}</span> waiting as SOL
+                </span>
+              </div>
+              {basket.squad && (
+                <p className="mt-3 border-t border-hairline pt-2.5 text-[11.5px] leading-relaxed text-ink3">
+                  This squad is currently{" "}
+                  <span className="text-ink2">{(basket.squad.cashPct * 100).toFixed(0)}% in cash</span>, so most
+                  of your allocation is waiting. It follows them in automatically when they enter — you do not
+                  need to do anything.
+                </p>
+              )}
+            </div>
+          )}
+
           <InvestPanel
             basketId={basket.id}
             kind={basket.kind}
