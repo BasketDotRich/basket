@@ -214,6 +214,24 @@ function reduceLedgerHoldings(userId: number, mint: string, fraction: number): v
     .all(userId, mint) as { basket_id: number; qty: number }[];
   if (rows.length === 0) return;
 
+  // If the token belonged to a SQUAD basket, shrink that pledge too. Otherwise
+  // the mirror engine reads the sale as drift and buys the position straight
+  // back within a minute, silently undoing the user's decision.
+  for (const r of rows) {
+    const b = db.prepare("SELECT kind FROM baskets WHERE id = ?").get(r.basket_id) as
+      | { kind: string }
+      | undefined;
+    if (b && b.kind !== "coin") {
+      const cur = (db
+        .prepare("SELECT COALESCE(allocated_lamports,0) AS a FROM trader_holdings WHERE user_id=? AND basket_id=?")
+        .get(userId, r.basket_id) as { a: number } | undefined)?.a ?? 0;
+      if (cur > 0) {
+        db.prepare("UPDATE trader_holdings SET allocated_lamports = ? WHERE user_id=? AND basket_id=?")
+          .run(Math.floor(cur * (1 - fraction)), userId, r.basket_id);
+      }
+    }
+  }
+
   db.exec("BEGIN");
   try {
     for (const r of rows) {

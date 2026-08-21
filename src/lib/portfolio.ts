@@ -474,7 +474,18 @@ async function redeemFromBasketInner(
   const toSell = rows.map((r) => {
     const ledgerRaw = BigInt(Math.floor(r.qty * fraction * 10 ** r.decimals));
     const walletRaw = liveRaw.get(r.mint) ?? BigInt(0);
-    return { ...r, rawAmount: ledgerRaw < walletRaw ? ledgerRaw : walletRaw };
+    // The wallet is shared across baskets, so capping at the FULL balance let
+    // one basket's redeem sell tokens another basket had bought. Cap at this
+    // basket's own share of that mint instead.
+    const totalLedgerQty = (db
+      .prepare("SELECT COALESCE(SUM(qty),0) AS q FROM holdings WHERE user_id = ? AND mint = ? AND qty > 0")
+      .get(userId, r.mint) as { q: number }).q;
+    const share =
+      totalLedgerQty > 0
+        ? (walletRaw * BigInt(Math.floor((r.qty / totalLedgerQty) * 10_000))) / BigInt(10_000)
+        : walletRaw;
+    const cap = share < walletRaw ? share : walletRaw;
+    return { ...r, rawAmount: ledgerRaw < cap ? ledgerRaw : cap };
   });
 
   const { quoteExitLegs, buildSwapTransactions } = await import("./swap");
@@ -714,7 +725,14 @@ async function positionValueAndCost(
   const db = getDb();
   const basket = getBasket(basketId);
   if (!basket) return null;
-  if (basket.kind === "coin") {
+  // Value from HOLDINGS whenever there are any — squad mirrors write real
+  // token rows here, while trader_holdings.units stays 0. Keying off
+  // basket.kind meant a mirrored position was valued at zero, so stop-loss
+  // and take-profit could never fire on a squad at all.
+  const hasHoldings = !!db
+    .prepare("SELECT 1 FROM holdings WHERE user_id = ? AND basket_id = ? AND qty > 0 LIMIT 1")
+    .get(userId, basketId);
+  if (basket.kind === "coin" || hasHoldings) {
     const rows = db
       .prepare("SELECT mint, qty, cost FROM holdings WHERE user_id = ? AND basket_id = ? AND qty > 0")
       .all(userId, basketId) as { mint: string; qty: number; cost: number }[];

@@ -37,6 +37,14 @@ export function getTreasuryAccount(): TreasuryAccount {
   const dest = treasuryWallet();
   const key = process.env.TREASURY_WALLET_KEY?.trim();
   if (!dest || !key) return null;
+  // The key must be an AES-GCM blob (iv:tag:ciphertext). A raw base58 secret
+  // here would fail to decrypt on every single signing attempt, and those
+  // failures are caught and swallowed — so it would look like the treasury
+  // simply never trades, with nothing explaining why.
+  if (!/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(key)) {
+    console.error("[treasury] TREASURY_WALLET_KEY is not an encrypted blob — treasury disabled");
+    return null;
+  }
 
   const row = db
     .prepare("SELECT id, wallet_address FROM users WHERE email = 'system@basket.rich'")
@@ -115,7 +123,15 @@ export async function idleLamports(): Promise<number> {
   if (!acct) return 0;
   const { getSolBalance } = await import("./accounts");
   const balance = await getSolBalance(acct.address).catch(() => 0);
-  return Math.max(0, balance - RESERVE_LAMPORTS);
+
+  // Ring-fence anything already credited to the burn queue. Realised profit is
+  // owed to token holders, so redeploying it would mean promising the same SOL
+  // twice — burned and invested.
+  const { queuedForBurnUsd } = await import("./burn");
+  const sol = (await solPriceUsd()) ?? 0;
+  const owed = sol > 0 ? Math.floor((queuedForBurnUsd() / sol) * LAMPORTS_PER_SOL) : 0;
+
+  return Math.max(0, balance - RESERVE_LAMPORTS - owed);
 }
 
 /**
@@ -132,7 +148,14 @@ export async function deployTreasury(): Promise<{ deployed: number; into: string
   const targets = await pickTargets(3);
   if (targets.length === 0) return { deployed: 0, into: [] };
 
-  const { investInBasket } = await import("./portfolio");
+  const { investInBasket, getPortfolio } = await import("./portfolio");
+  // Cap against TOTAL exposure, not just this tick's idle. Enforcing the limit
+  // per-cycle let repeated cycles pile the whole treasury into one basket.
+  const { positions } = await getPortfolio(acct.userId);
+  const solUsd = (await solPriceUsd()) ?? 0;
+  const existingByBasket = new Map(positions.map((p) => [p.basket.id, p.value]));
+  const portfolioUsd = positions.reduce((a, p) => a + p.value, 0) + (idle / LAMPORTS_PER_SOL) * solUsd;
+
   const perBasket = Math.min(
     Math.floor(idle / targets.length),
     Math.floor(idle * MAX_PER_BASKET)
@@ -143,6 +166,12 @@ export async function deployTreasury(): Promise<{ deployed: number; into: string
   let deployed = 0;
   for (const t of targets) {
     try {
+      // Skip a basket that is already at or over the concentration limit.
+      if (portfolioUsd > 0 && solUsd > 0) {
+        const already = existingByBasket.get(t.basketId) ?? 0;
+        const after = already + (perBasket / LAMPORTS_PER_SOL) * solUsd;
+        if (after / portfolioUsd > MAX_PER_BASKET) continue;
+      }
       await investInBasket(acct.userId, t.basketId, perBasket / LAMPORTS_PER_SOL);
       deployed += perBasket;
       into.push(t.name);
@@ -178,9 +207,16 @@ export async function harvestTreasury(): Promise<{ harvested: number; burned: nu
   let queued = 0;
   for (const p of positions) {
     if (p.cost <= 0) continue;
+    // A position we cannot price is not a position that fell. Blanket-selling
+    // on a feed outage — and then writing the tokens off at $0 via
+    // allowUnpriced — would destroy real value over a temporary API problem.
+    const legs = p.tokens ?? [];
+    if (legs.length > 0 && legs.every((t) => t.unpriced)) continue;
+    const anyUnpriced = legs.some((t) => t.unpriced);
+
     const pnlPct = ((p.value - p.cost) / p.cost) * 100;
     const takeProfit = pnlPct >= HARVEST_PROFIT_PCT;
-    const cutLoss = pnlPct <= -STOP_LOSS_PCT;
+    const cutLoss = pnlPct <= -STOP_LOSS_PCT && !anyUnpriced;
     if (!takeProfit && !cutLoss) continue;
 
     try {

@@ -13,6 +13,7 @@
 import { getDb } from "./db";
 import { getPrices } from "./prices";
 import { getSquadPortfolio, squadIsMirrorable } from "./squad";
+import { getTokenBalanceRaw } from "./accounts";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -177,6 +178,15 @@ async function syncSquadMirrorInner(
   if (!wallet) return { ...base, skipped: "no wallet" };
 
   const { quoteExitLegs, quoteBasketLegs, buildSwapTransactions } = await import("./swap");
+  // Read the wallet ONCE up front. Selling a size taken from the ledger with no
+  // on-chain cap fails permanently whenever the ledger drifts above reality,
+  // and overlapping syncs would otherwise each scale the same row down instead
+  // of converging — leaving a phantom position behind.
+  const { getAccountHoldings } = await import("./trading");
+  const live = await getAccountHoldings(userId).catch(() => null);
+  if (!live) return { ...base, skipped: "cannot read wallet" };
+  const walletRaw = new Map(live.tokens.map((t) => [t.mint, BigInt(t.rawAmount)]));
+
   let sold = 0;
   let bought = 0;
 
@@ -188,7 +198,10 @@ async function syncSquadMirrorInner(
         .prepare("SELECT symbol, decimals FROM token_meta WHERE mint = ?")
         .get(sell.mint) as { symbol: string; decimals: number } | undefined;
       const decimals = meta?.decimals ?? 6;
-      const rawAmount = BigInt(Math.floor(row.qty * sell.fraction * 10 ** decimals));
+      const wanted = BigInt(Math.floor(row.qty * sell.fraction * 10 ** decimals));
+      const onChain = walletRaw.get(sell.mint) ?? BigInt(0);
+      // Never ask to sell more than the wallet actually holds.
+      const rawAmount = wanted < onChain ? wanted : onChain;
       if (rawAmount <= BigInt(0)) continue;
       const quoted = await quoteExitLegs(
         [{ mint: sell.mint, symbol: meta?.symbol ?? "", rawAmount: rawAmount.toString() }],
@@ -206,10 +219,26 @@ async function syncSquadMirrorInner(
   }
 
   for (const buy of buys) {
+    let landedSig: string | null = null;
     try {
       // Never spend past the allocation, and always leave network-fee headroom.
       const balance = await getSolBalance(wallet.address);
-      const spendable = Math.min(buy.lamports, balance - WITHDRAW_RESERVE_LAMPORTS);
+      // One wallet funds every squad, so this basket may only spend what is
+      // left after every OTHER standing pledge is honoured. Without this, two
+      // baskets each pass their own balance check and spend the same SOL.
+      const otherPledges = (db
+        .prepare(
+          "SELECT COALESCE(SUM(allocated_lamports),0) AS s FROM trader_holdings WHERE user_id = ? AND basket_id != ? AND allocated_lamports > 0"
+        )
+        .get(userId, basketId) as { s: number }).s;
+      const otherDeployedUsd = (db
+        .prepare(
+          "SELECT COALESCE(SUM(cost),0) AS c FROM holdings WHERE user_id = ? AND basket_id != ?"
+        )
+        .get(userId, basketId) as { c: number }).c;
+      const otherIdle = Math.max(0, otherPledges - (sol > 0 ? (otherDeployedUsd / sol) * LAMPORTS_PER_SOL : 0));
+      const headroom = balance - WITHDRAW_RESERVE_LAMPORTS - otherIdle;
+      const spendable = Math.min(buy.lamports, headroom);
       if (spendable < MIN_TRADE_LAMPORTS) continue;
       const legs = await quoteBasketLegs(
         [{ mint: buy.mint, symbol: buy.symbol, weight: 1 }],
@@ -226,13 +255,35 @@ async function syncSquadMirrorInner(
 
       const [tx] = await buildSwapTransactions(legs, wallet.address);
       const sig = await signSendConfirmOne(userId, tx);
+      landedSig = sig;
       const qty = Number(legs[0].outAmount) / 10 ** decimals;
       const costUsd = (legs[0].lamportsIn / LAMPORTS_PER_SOL) * sol;
       addLedgerPosition(db, userId, basketId, buy.mint, qty, costUsd);
       recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} · ${sig}`);
       bought++;
-    } catch {
-      // same: a failed leg is retried on the next sync, not fatal
+    } catch (e) {
+      // If the swap CONFIRMED and something after it threw, the tokens are
+      // real and must be recorded — otherwise the next tick sees no position
+      // and buys the very same thing again, every tick, forever.
+      if (landedSig) {
+        console.error(`[mirror] buy ${landedSig} landed but post-processing failed`, e);
+        try {
+          const d = await ensureTokenMeta(db, buy.mint, buy.symbol);
+          if (d != null) {
+            const onChainQty = Number(await getTokenBalanceRaw(wallet.address, buy.mint)) / 10 ** d;
+            const prior = (db
+              .prepare("SELECT COALESCE(qty,0) AS q FROM holdings WHERE user_id=? AND basket_id=? AND mint=?")
+              .get(userId, basketId, buy.mint) as { q: number } | undefined)?.q ?? 0;
+            const delta = Math.max(0, onChainQty - prior);
+            if (delta > 0) {
+              addLedgerPosition(db, userId, basketId, buy.mint, delta, (buy.lamports / LAMPORTS_PER_SOL) * sol);
+              recordMirrorTrade(db, userId, basketId, `Mirror buy ${buy.symbol} (recovered) · ${landedSig}`);
+            }
+          }
+        } catch {
+          /* recovery is best effort; the reconciler will catch it */
+        }
+      }
     }
   }
 
