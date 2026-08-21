@@ -186,7 +186,7 @@ export function MarketsTable({ rows: initialRows, genres }: { rows: MarketRow[];
                 <td className="num py-0 pl-3 text-xs text-ink3">{i + 1}</td>
                 <td className="py-0">
                   <Link href={`/tokens/${t.mint}`} className="flex items-center gap-2 py-2">
-                    <TokenIcon src={t.icon} symbol={t.symbol} size={22} />
+                    <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={22} />
                     <span className="font-medium group-hover:text-brand">{t.symbol}</span>
                     <span className="hidden max-w-36 truncate text-ink3 xl:inline">{t.name}</span>
                   </Link>

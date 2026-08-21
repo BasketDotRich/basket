@@ -18,6 +18,7 @@ export async function GET(req: Request) {
       symbol?: string;
       name?: string;
       decimals?: number;
+      icon?: string;
       mcap?: number;
       usdPrice?: number;
       isVerified?: boolean;
@@ -35,7 +36,12 @@ export async function GET(req: Request) {
         mint: t.id,
         symbol: (t.symbol ?? "?").trim(),
         name: (t.name ?? "Unknown").trim(),
-        icon: `https://dd.dexscreener.com/ds-data/tokens/solana/${t.id}.png?size=lg`,
+        // Jupiter already knows the token's real icon — use it. Guessing a
+        // DexScreener URL 404s for anything it hasn't indexed, which is exactly
+        // the new low-cap coins this list exists to surface.
+        icon:
+          t.icon?.trim() ||
+          `https://dd.dexscreener.com/ds-data/tokens/solana/${t.id}.png?size=lg`,
         decimals: t.decimals ?? 6,
         price: t.usdPrice ?? null,
         mcap: t.mcap ?? null,

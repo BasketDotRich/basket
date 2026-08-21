@@ -238,7 +238,7 @@ export default async function DashboardPage() {
                           <tr key={t.mint} className="border-t border-hairline">
                             <td className="py-2">
                               <span className="flex items-center gap-2">
-                                <TokenIcon src={t.icon} symbol={t.symbol} size={22} />
+                                <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={22} />
                                 <span className="font-medium">{t.symbol}</span>
                               </span>
                             </td>

@@ -318,7 +318,13 @@ async function ensureTokenMeta(
       { signal: AbortSignal.timeout(10_000), cache: "no-store" }
     );
     if (!res.ok) return null;
-    const list = (await res.json()) as Array<{ id: string; symbol?: string; name?: string; decimals?: number }>;
+    const list = (await res.json()) as Array<{
+      id: string;
+      symbol?: string;
+      name?: string;
+      decimals?: number;
+      icon?: string;
+    }>;
     const t = list?.find((x) => x.id === mint);
     if (!t || t.decimals == null) return null;
     db.prepare(
@@ -327,7 +333,12 @@ async function ensureTokenMeta(
       mint,
       (t.symbol ?? symbol).trim(),
       (t.name ?? symbol).trim(),
-      `https://dd.dexscreener.com/ds-data/tokens/solana/${mint}.png?size=lg`,
+      // Jupiter hands back the token's real icon (usually the IPFS art the
+      // creator uploaded). Use it. The DexScreener URL is only a guess and it
+      // 404s for anything DexScreener hasn't indexed yet, which is exactly the
+      // young, low-cap tokens people add to custom baskets — so guessing left
+      // those coins showing a bare letter tile forever.
+      t.icon?.trim() || `https://dd.dexscreener.com/ds-data/tokens/solana/${mint}.png?size=lg`,
       t.decimals
     );
     return t.decimals;

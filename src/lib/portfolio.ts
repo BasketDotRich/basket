@@ -144,6 +144,41 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 const MIN_INVEST_SOL = 0.01;
 
 /**
+ * How many swap legs may be in flight at once. Three cuts an 8-leg exit from
+ * ~8 confirmations end-to-end to ~3, without hammering Jupiter's free-tier
+ * rate limit on the build endpoint (which 429s under sustained parallelism).
+ */
+const LEG_CONCURRENCY = 3;
+
+/**
+ * Run one job per leg through a small worker pool.
+ *
+ * Concurrency is safe here because each leg is self-contained end-to-end: its
+ * swap CONFIRMS on-chain before its ledger rows are written, and those writes
+ * happen in one synchronous transaction (no await inside), so legs can never
+ * interleave half-recorded state. On-chain, Solana write-locks the accounts a
+ * transaction touches and every Jupiter swap idempotently (re)creates the
+ * wSOL account it uses, so same-wallet swaps tolerate being in flight
+ * together. After the first failure no NEW legs are dispatched — in-flight
+ * legs finish and record, unstarted legs stay untouched.
+ */
+async function runLegPool<T>(
+  items: T[],
+  job: (item: T) => Promise<boolean> // false = failure, stop dispatching
+): Promise<void> {
+  let cursor = 0;
+  let failed = false;
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(LEG_CONCURRENCY, items.length)) }, async () => {
+      while (!failed && cursor < items.length) {
+        const item = items[cursor++];
+        if (!(await job(item))) failed = true;
+      }
+    })
+  );
+}
+
+/**
  * Invest by executing REAL Jupiter swaps from the account wallet's SOL into
  * every leg of the basket. The tokens land in the user's own wallet; the
  * holdings table is the per-basket ledger of what those swaps acquired, so
@@ -306,12 +341,14 @@ async function investInBasketInner(
   let spentSol = 0;
   let failure: unknown = null;
 
-  // Execute ONE LEG AT A TIME and persist each leg the moment its swap is
-  // CONFIRMED on-chain. Never batch-then-record: if leg 3 of 5 fails, legs 1-2
-  // are already real on-chain, so they must already be real in the ledger —
-  // otherwise a retry double-buys them and the tokens look like they came from
-  // nowhere. Equally, nothing is recorded for a swap that didn't confirm.
-  for (const leg of legs) {
+  // Persist each leg the moment ITS OWN swap is CONFIRMED on-chain. Never
+  // batch-then-record: if one leg fails, the ones that landed are already real
+  // on-chain, so they must already be real in the ledger — otherwise a retry
+  // double-buys them and the tokens look like they came from nowhere. Equally,
+  // nothing is recorded for a swap that didn't confirm. Legs run through a
+  // small pool (see runLegPool) so a five-leg buy waits on ~2 confirmation
+  // rounds instead of five in a row.
+  await runLegPool(legs, async (leg) => {
     try {
       const [tx] = await buildSwapTransactions([leg], wallet.address);
       const sig = await signSendConfirmOne(userId, tx);
@@ -339,11 +376,12 @@ async function investInBasketInner(
         db.exec("ROLLBACK");
         throw e;
       }
+      return true;
     } catch (e) {
-      failure = e; // stop here — the remaining legs were never sent
-      break;
+      failure = failure ?? e; // in-flight legs finish; unstarted legs are never sent
+      return false;
     }
-  }
+  });
 
   await recordSnapshot(userId, true);
 
@@ -510,10 +548,13 @@ async function redeemFromBasketInner(
   let costRedeemed = 0;
   let sellFailure: unknown = null;
 
-  // Sell ONE LEG AT A TIME, confirming each, and retire that leg from the
-  // ledger immediately. A later leg failing can then never un-record a sale
-  // that already happened, nor leave a sold leg still showing as held.
-  for (const r of rows) {
+  // Each leg confirms its own swap, then retires itself from the ledger in
+  // one synchronous transaction. A failing leg can then never un-record a sale
+  // that already happened, nor leave a sold leg still showing as held. Legs
+  // run through a small pool (see runLegPool) — this was the single biggest
+  // reason exits felt slow: an 8-leg basket used to wait through 8
+  // confirmations back to back.
+  await runLegPool(rows, async (r) => {
     const q = quotedByMint.get(r.mint);
     const legCost = r.cost * fraction;
     let legSol = 0;
@@ -525,16 +566,12 @@ async function redeemFromBasketInner(
         sig = await signSendConfirmOne(userId, tx);
         legSol = Number(q.outAmount) / LAMPORTS_PER_SOL;
       } catch (e) {
-        sellFailure = e;
-        break; // leave this leg (and the rest) untouched in the ledger
+        sellFailure = sellFailure ?? e;
+        return false; // this leg stays in the ledger; no further legs dispatch
       }
     }
     // No quote for this leg means it is unrouteable and the caller already
     // consented to writing it off at zero (checked above).
-
-    proceedsSol += legSol;
-    costRedeemed += legCost;
-    if (sig) signatures.push(sig);
 
     db.exec("BEGIN");
     try {
@@ -559,10 +596,16 @@ async function redeemFromBasketInner(
       db.exec("COMMIT");
     } catch (e) {
       db.exec("ROLLBACK");
-      sellFailure = e;
-      break;
+      sellFailure = sellFailure ?? e;
+      return false;
     }
-  }
+    // Totals count only legs whose ledger rows committed — the fees charged on
+    // proceeds further down must be charged on recorded sales, nothing else.
+    proceedsSol += legSol;
+    costRedeemed += legCost;
+    if (sig) signatures.push(sig);
+    return true;
+  });
 
   const soldEverything = !sellFailure;
   if (soldEverything && basket.kind !== "coin") {

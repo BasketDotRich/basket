@@ -170,6 +170,23 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
       ? ((chart.points[chart.points.length - 1][1] - chart.points[0][1]) / chart.points[0][1]) * 100
       : null;
 
+  // Label the change by the span the data ACTUALLY covers, not the span that
+  // was requested. Most memecoins are younger than 90 days, so asking for 90d
+  // and asking for 30d can return the same short series — labelling both "90d"
+  // is simply untrue, and it's what made the ranges look identical.
+  const spanDays =
+    chart && chart.points.length >= 2
+      ? Math.max(
+          1,
+          Math.round(
+            (chart.points[chart.points.length - 1][0] - chart.points[0][0]) / 86_400_000
+          )
+        )
+      : null;
+  // Only call it short when it's meaningfully short — a 90d window that returns
+  // 88 days of data is a 90d window as far as a reader is concerned.
+  const spanShort = spanDays != null && spanDays < days - 2;
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-10">
       <Link href="/baskets" className="text-sm text-ink3 hover:text-ink">
@@ -180,7 +197,7 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
         <div className="flex -space-x-2 pt-1">
           {basket.kind === "coin"
             ? (basket.tokens ?? []).slice(0, 4).map((t) => (
-                <TokenIcon key={t.mint} src={t.icon} symbol={t.symbol} size={36} className="rounded-full ring-2 ring-page" />
+                <TokenIcon key={t.mint} src={t.icon} mint={t.mint} symbol={t.symbol} size={36} className="rounded-full ring-2 ring-page" />
               ))
             : (basket.traders ?? []).slice(0, 4).map((t) => (
                 <span
@@ -225,7 +242,17 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <h2 className="text-sm font-semibold text-ink2">Performance (indexed to 100)</h2>
-                {chartPct != null && <Delta value={chartPct} suffix={`${days}d`} />}
+                {chartPct != null && (
+                  <Delta value={chartPct} suffix={spanShort ? `${spanDays}d` : `${days}d`} />
+                )}
+                {spanShort && (
+                  <span
+                    className="text-[11px] text-ink3"
+                    title={`This basket only has ${spanDays} days of price history, so the ${days}-day view shows everything that exists.`}
+                  >
+                    all history
+                  </span>
+                )}
               </div>
               <div className="flex gap-1 rounded-lg border border-hairline bg-card2 p-0.5 text-xs">
                 {[7, 30, 90].map((d) => (
@@ -298,7 +325,7 @@ export default function BasketPage({ params }: { params: Promise<{ id: string }>
                       <tr key={t.mint} className="border-t border-hairline">
                         <td className="py-2.5">
                           <span className="flex items-center gap-2.5">
-                            <TokenIcon src={t.icon} symbol={t.symbol} size={26} />
+                            <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={26} />
                             <span>
                               <span className="block font-medium leading-tight">{t.symbol}</span>
                               <span className="block text-xs leading-tight text-ink3">{t.name}</span>

@@ -86,6 +86,7 @@ export function BasketCard({ basket }: { basket: BasketCardData }) {
                 <TokenIcon
                   key={t.mint}
                   src={t.icon}
+                  mint={t.mint}
                   symbol={t.symbol}
                   size={24}
                   className="rounded-full ring-2 ring-card transition-transform group-hover:translate-y-[-1px]"

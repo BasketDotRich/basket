@@ -18,7 +18,7 @@ export async function Ticker() {
       const down = ch != null && ch < 0;
       return (
         <span key={`${keyPrefix}-${t.mint}`} className="flex shrink-0 items-center gap-2 px-5">
-          <TokenIcon src={t.icon} symbol={t.symbol} size={18} />
+          <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={18} />
           <span className="text-sm font-medium">{t.symbol}</span>
           <span className="text-sm tabular-nums text-ink2">{fmtUsd(t.p!.usdPrice)}</span>
           {ch != null && (

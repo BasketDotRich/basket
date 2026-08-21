@@ -322,6 +322,8 @@ export async function getHistory(coingeckoId: string, days: number): Promise<Ser
 export type TokenDetail = {
   symbol: string | null;
   name: string | null;
+  /** The token's real artwork, straight from Jupiter — not a guessed CDN path. */
+  icon: string | null;
   holderCount: number | null;
   organicScore: number | null;
   topHoldersPct: number | null;
@@ -353,6 +355,7 @@ export async function getTokenDetail(mint: string): Promise<TokenDetail | null> 
       id: string;
       symbol?: string;
       name?: string;
+      icon?: string;
       holderCount?: number;
       organicScore?: number;
       firstPool?: { createdAt?: string };
@@ -368,6 +371,7 @@ export async function getTokenDetail(mint: string): Promise<TokenDetail | null> 
     const detail: TokenDetail = {
       symbol: t.symbol ?? null,
       name: t.name ?? null,
+      icon: t.icon?.trim() || null,
       holderCount: t.holderCount ?? null,
       organicScore: t.organicScore != null ? Math.round(t.organicScore) : null,
       topHoldersPct: t.audit?.topHoldersPercentage ?? null,

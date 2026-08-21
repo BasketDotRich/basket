@@ -189,7 +189,7 @@ export function TokenPicker({
                   : "border-hairline bg-card hover:border-brand/60"
               )}
             >
-              <TokenIcon src={t.icon} symbol={t.symbol} size={30} />
+              <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={30} />
               <span className="min-w-0">
                 <span className="flex items-center gap-1.5 font-medium leading-tight">
                   {t.symbol}

@@ -43,7 +43,9 @@ export default async function TokenPage(props: PageProps<"/tokens/[mint]">) {
           mint,
           symbol: detail.symbol,
           name: detail.name ?? "Unknown token",
-          icon: `https://dd.dexscreener.com/ds-data/tokens/solana/${mint}.png?size=lg`,
+          icon:
+            detail.icon ??
+            `https://dd.dexscreener.com/ds-data/tokens/solana/${mint}.png?size=lg`,
           coingeckoId: null,
         }
       : undefined);
@@ -101,7 +103,7 @@ export default async function TokenPage(props: PageProps<"/tokens/[mint]">) {
       <Link href="/" className="text-xs text-ink3 hover:text-ink">← Markets</Link>
 
       <div className="mt-4 flex flex-wrap items-center gap-4">
-        <TokenIcon src={metaRow.icon} symbol={metaRow.symbol} size={44} />
+        <TokenIcon src={metaRow.icon} mint={mint} symbol={metaRow.symbol} size={44} />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="display text-[28px]">{metaRow.symbol}</h1>

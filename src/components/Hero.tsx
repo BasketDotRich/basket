@@ -152,7 +152,7 @@ export function Hero({
               href={`/tokens/${t.mint}`}
               className="card lift flex items-center gap-3 px-3.5 py-3"
             >
-              <TokenIcon src={t.icon} symbol={t.symbol} size={28} />
+              <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={28} />
               <div className="min-w-0">
                 <div className="text-[13px] font-medium">{t.symbol}</div>
                 <div className="num text-[11px] text-ink3">

@@ -105,7 +105,7 @@ export function WalletHoldings() {
                 <tr key={t.mint} className="border-b border-hairline last:border-0">
                   <td className="py-2.5 pl-5">
                     <span className="flex items-center gap-2">
-                      <TokenIcon src={t.icon} symbol={t.symbol} size={22} />
+                      <TokenIcon src={t.icon} mint={t.mint} symbol={t.symbol} size={22} />
                       <span className="font-medium">{t.symbol}</span>
                     </span>
                   </td>
