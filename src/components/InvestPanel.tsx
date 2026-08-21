@@ -320,8 +320,8 @@ export function InvestPanel({
               </>
             )}{" "}
             Costs: {PLATFORM_FEE_PCT}% per swap (both ways) plus 10% of realised profit when you
-            exit in the green. Never on principal, never on a loss. All fees fund buyback &amp;
-            burn.
+            exit in the green. Never on principal, never on a loss.{" "}
+            <Link href="/fees" className="text-brand hover:underline">Where fees go →</Link>
           </p>
 
           {!confirming ? (
